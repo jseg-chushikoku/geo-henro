@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3b5a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ジオ遍路">
+<title>ジオ遍路</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" crossorigin="anonymous" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* スマホ：地図を全面に、下から操作板がせり上がる。広い画面：左に操作板 */
+:root{
+  --paper:#f7f5f0; --card:#ffffff; --ink:#22201c; --muted:#6d685e; --line:#e2ddd2;
+  --henro:#b3261e; --henro-halo:#fffdf7; --temple:#1f3b5a; --accent:#a0522d;
+  --shadow:0 6px 24px rgba(30,25,15,.18);
+  --f-title:"Shippori Mincho B1","Yu Mincho",serif;
+  --f-body:"Zen Kaku Gothic New","Yu Gothic","Hiragino Sans","Meiryo",sans-serif;
+  --peek:150px; --on-temple:#fff;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#1b1a17; --card:#25231f; --ink:#eee9df; --muted:#a9a295; --line:#3a3731;
+  --henro:#ff6b5e; --henro-halo:#1b1a17; --temple:#9cc3ea; --on-temple:#1b1a17; --accent:#e0a070;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#1b1a17; --card:#25231f; --ink:#eee9df; --muted:#a9a295; --line:#3a3731;
+  --henro:#ff6b5e; --henro-halo:#1b1a17; --temple:#9cc3ea; --on-temple:#1b1a17; --accent:#e0a070;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%;margin:0;overflow:hidden}
+body{background:var(--paper);color:var(--ink);font:15px/1.6 var(--f-body);-webkit-tap-highlight-color:transparent}
+#map{position:fixed;inset:0;background:#dfe6ea}
+button{font:inherit;color:inherit}
+
+/* 上の名札 */
+#brand{position:fixed;z-index:1000;top:calc(10px + env(safe-area-inset-top));left:12px;
+  background:var(--card);border-radius:999px;box-shadow:var(--shadow);padding:6px 14px 6px 10px;display:flex;align-items:center;gap:8px}
+#brand .mark{width:22px;height:22px;border-radius:50%;background:var(--henro);display:grid;place-items:center;color:#fff;font:800 12px/1 var(--f-title)}
+#brand b{font:800 16px/1 var(--f-title);letter-spacing:.06em}
+#brand span{font-size:11px;color:var(--muted)}
+
+/* 右の丸ボタン */
+#fabs{position:fixed;z-index:1000;right:12px;top:calc(10px + env(safe-area-inset-top));display:flex;flex-direction:column;gap:10px}
+.fab{width:46px;height:46px;border-radius:50%;border:0;background:var(--card);box-shadow:var(--shadow);display:grid;place-items:center;cursor:pointer}
+.fab svg{width:22px;height:22px;stroke:var(--ink);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.fab:active{transform:scale(.94)}
+.fab.on{background:#1a73e8}.fab.on svg{stroke:#fff}
+.fab.wait svg{animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.3}}
+/* 現在地 */
+.me{width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 1px #0003,0 0 0 8px rgba(26,115,232,.18)}
+.near{margin-top:12px;border-top:1px solid var(--line);padding-top:8px;font-size:13px}
+.near div{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+.near b{font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.offline-badge{position:fixed;z-index:1000;left:12px;top:calc(56px + env(safe-area-inset-top));background:#5f4b1e;color:#fff;
+  font-size:11.5px;padding:3px 10px;border-radius:999px;display:none}
+body.offline .offline-badge{display:block}
+.btn{display:inline-block;border:1px solid var(--line);background:transparent;border-radius:10px;padding:7px 14px;font-size:13px;cursor:pointer;margin-top:6px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.box{background:var(--paper);border-radius:10px;padding:10px 12px;font-size:12.5px;margin:8px 0}
+h3{font-size:13.5px;margin:18px 0 4px}
+.leaflet-control-zoom{display:none}
+
+/* 下の操作板 */
+#sheet{position:fixed;z-index:1001;left:0;right:0;bottom:0;height:88dvh;background:var(--card);
+  border-radius:18px 18px 0 0;box-shadow:0 -4px 24px rgba(30,25,15,.16);display:flex;flex-direction:column;
+  transform:translateY(calc(88dvh - var(--peek)));transition:transform .28s cubic-bezier(.2,.8,.2,1);touch-action:none}
+#sheet.half{transform:translateY(calc(88dvh - 46dvh))}
+#sheet.full{transform:translateY(0)}
+#sheet.dragging{transition:none}
+#grip{padding:8px 0 2px;cursor:grab;flex:none}
+#grip::before{content:"";display:block;width:40px;height:5px;border-radius:3px;background:var(--line);margin:0 auto}
+#tabs{display:flex;gap:4px;padding:6px 12px 8px;flex:none;border-bottom:1px solid var(--line)}
+#tabs button{flex:1;border:0;background:transparent;padding:7px 0;border-radius:10px;font-size:13.5px;font-weight:500;color:var(--muted);cursor:pointer}
+#tabs button[aria-selected=true]{background:var(--ink);color:var(--card)}
+#body{flex:1;overflow-y:auto;padding:12px 16px calc(24px + env(safe-area-inset-bottom));touch-action:pan-y;overscroll-behavior:contain}
+.pane{display:none}.pane.on{display:block}
+h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
+.note{font-size:12px;color:var(--muted)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin:0 -16px 10px;padding-left:16px;padding-right:16px;scrollbar-width:none}
+.chips button{flex:none;border:1px solid var(--line);background:transparent;border-radius:999px;padding:4px 12px;font-size:12.5px;cursor:pointer}
+.chips button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* 地質 */
+.geo-card{display:flex;gap:12px;align-items:flex-start}
+.geo-sw{flex:none;width:44px;height:44px;border-radius:10px;border:1px solid #0002}
+.geo-name{font-weight:700;font-size:16px;line-height:1.45}
+.geo-age{font-size:13px;margin-top:2px}
+.tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--paper);border:1px solid var(--line);margin-top:6px}
+.hint{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:13.5px}
+.hint svg{flex:none;width:28px;height:28px;stroke:var(--muted);fill:none;stroke-width:1.6}
+
+/* 札所の一覧 */
+.tlist{list-style:none;margin:0;padding:0}
+.tlist li{display:flex;gap:12px;align-items:center;padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.tlist li:active{background:var(--paper)}
+.tno{flex:none;width:32px;height:32px;border-radius:50%;background:var(--temple);color:var(--on-temple);display:grid;place-items:center;font:700 13px/1 var(--f-body)}
+.tmain{flex:1;min-width:0}
+.tname{font-weight:700}
+.tname small{font-weight:400;color:var(--muted);font-size:11.5px;margin-left:6px}
+.tgeo{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw2{display:inline-block;width:10px;height:10px;border:1px solid #0003;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* 内訳 */
+.bar{display:flex;height:18px;border-radius:6px;overflow:hidden;margin:4px 0 8px}
+.bar span{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;margin-bottom:12px}
+.lrow{display:flex;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.lrow .l{flex:1;min-width:0}
+.lrow .k{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:500}
+
+/* 地図設定 */
+.seg{display:flex;background:var(--paper);border-radius:10px;padding:3px;gap:3px;margin-bottom:12px}
+.seg button{flex:1;border:0;background:transparent;border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--card);box-shadow:0 1px 4px rgba(0,0,0,.12);font-weight:700}
+.field{display:flex;align-items:center;gap:12px;margin:10px 0}
+.field input[type=range]{flex:1}
+.switch{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.switch input{width:20px;height:20px;accent-color:var(--accent)}
+.credit{margin-top:16px;font-size:11px;color:var(--muted);line-height:1.7}
+
+/* 地図の上の札所の印。引いて見るときは小さな点 */
+.tmk{display:grid;place-items:center}
+.tnum{width:22px;height:22px;border-radius:50%;background:#1f3b5a;color:#fff;display:grid;place-items:center;
+  font:700 10px/1 var(--f-body);border:2px solid #fff;box-shadow:0 0 0 1px #0004}
+.zoom-low .tnum{width:10px;height:10px;font-size:0;border-width:1.5px}
+.leaflet-popup-content{font-family:var(--f-body);font-size:13px;margin:10px 14px}
+.leaflet-control-attribution{font-size:10px}
+
+/* お知らせ */
+#toast{position:fixed;z-index:1100;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%) translateY(-10px);
+  background:var(--ink);color:var(--card);padding:8px 14px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;max-width:calc(100% - 32px)}
+#toast.on{opacity:1;transform:translateX(-50%)}
+#err{display:none;background:#fde8e6;color:#8a1c12;border:1px solid #e0a39c;padding:8px 10px;border-radius:8px;font-size:12.5px;margin-bottom:10px}
+
+/* 歩いた道の記録 */
+.rec-card{background:var(--paper);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.rec-state{font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px}
+.rec-state.on::before{content:"";width:10px;height:10px;border-radius:50%;background:#d93025;animation:blink 1.2s infinite}
+.rec-state.paused::before{content:"";width:10px;height:10px;border-radius:2px;background:var(--muted)}
+.rec-nums{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0}
+.rec-nums div{display:flex;flex-direction:column}
+.rec-nums b{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.rec-nums span{font-size:11px;color:var(--muted)}
+.rec-btns{display:flex;gap:8px;flex-wrap:wrap}
+.btn.big{flex:1;padding:11px 0;font-size:14.5px;font-weight:700;margin-top:0}
+.tracks{list-style:none;margin:0;padding:0}
+.tracks li{padding:10px 0;border-bottom:1px solid var(--line)}
+.tracks .tn{font-weight:700;font-size:14px}
+.tracks .ts{font-size:12px;color:var(--muted)}
+.tracks .ta{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.tracks .ta .btn{margin-top:0;padding:5px 12px;font-size:12.5px}
+.tracks .empty{color:var(--muted);font-size:13px;border:0}
+#rec-pill{position:fixed;z-index:1000;left:12px;bottom:calc(var(--peek) + 12px);border:0;border-radius:999px;background:#d93025;color:#fff;
+  font-size:13px;font-weight:700;padding:7px 14px;box-shadow:var(--shadow);display:flex;gap:8px;align-items:center;cursor:pointer}
+#rec-pill::before{content:"";width:9px;height:9px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+#rec-pill.paused{background:#5f6368}#rec-pill.paused::before{animation:none;border-radius:2px}
+
+/* 広い画面（パソコン）では左に固定 */
+@media (min-width:900px){
+  #sheet,#sheet.half,#sheet.full{left:12px;top:12px;bottom:12px;right:auto;width:380px;height:auto;border-radius:16px;transform:none;box-shadow:var(--shadow)}
+  #grip{display:none}
+  #brand{left:404px}
+  #rec-pill{left:404px;bottom:16px}
+}
+</style>
+</head>
+<body>
+<div id="map" aria-label="地図"></div>
+
+<div id="brand"><div class="mark">遍</div><b>ジオ遍路</b><span>試作</span></div>
+<div class="offline-badge">電波なし・保存した地図で表示中</div>
+<button id="rec-pill" hidden>記録中 <span id="rec-pill-km">0.00 km</span></button>
+
+<div id="fabs">
+  <button class="fab" id="btn-locate" aria-label="現在地">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+  <button class="fab" id="btn-home" aria-label="四国全体を表示">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+  <button class="fab" id="btn-zoomin" aria-label="拡大"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="fab" id="btn-zoomout" aria-label="縮小"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+</div>
+
+<section id="sheet" aria-label="操作板">
+  <div id="grip" aria-hidden="true"></div>
+  <nav id="tabs" role="tablist">
+    <button role="tab" data-pane="geo" aria-selected="true">地質</button>
+    <button role="tab" data-pane="temple" aria-selected="false">札所</button>
+    <button role="tab" data-pane="stats" aria-selected="false">内訳</button>
+    <button role="tab" data-pane="rec" aria-selected="false">記録</button>
+    <button role="tab" data-pane="layers" aria-selected="false">地図</button>
+  </nav>
+  <div id="body">
+    <div id="err"></div>
+
+    <div class="pane on" id="pane-geo">
+      <div id="here">
+        <div class="hint">
+          <svg viewBox="0 0 24 24"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <div>地図をタップすると、その場所の地質（岩石と時代）が出ます。右上の <b>◎</b> を押すと、いまいる場所の地質が出ます。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-temple">
+      <div class="chips" id="tchips">
+        <button aria-pressed="true" data-r="all">88か所</button>
+        <button aria-pressed="false" data-r="1-23">徳島 1〜23</button>
+        <button aria-pressed="false" data-r="24-39">高知 24〜39</button>
+        <button aria-pressed="false" data-r="40-65">愛媛 40〜65</button>
+        <button aria-pressed="false" data-r="66-88">香川 66〜88</button>
+      </div>
+      <ul class="tlist" id="tlist"></ul>
+    </div>
+
+    <div class="pane" id="pane-stats">
+      <h2>遍路道の足もとの地質</h2>
+      <div class="chips" id="schips">
+        <button aria-pressed="true" data-pref="全体">全体</button>
+        <button aria-pressed="false" data-pref="徳島県">徳島</button>
+        <button aria-pressed="false" data-pref="高知県">高知</button>
+        <button aria-pressed="false" data-pref="愛媛県">愛媛</button>
+        <button aria-pressed="false" data-pref="香川県">香川</button>
+      </div>
+      <div id="stotal" class="note"></div>
+      <div class="bar" id="sbar"></div>
+      <div class="legend" id="slegend"></div>
+      <div id="slith"></div>
+      <p class="note">遍路道を約1kmおきに区切って地質を数え、県ごとの延長に割り振った目安です。「凡例なし」は橋で川・海を渡る所などです。</p>
+    </div>
+
+    <div class="pane" id="pane-rec">
+      <div class="rec-card">
+        <div class="rec-state" id="rec-state">記録していません</div>
+        <div class="rec-nums">
+          <div><b id="rec-km">0.00</b><span>km</span></div>
+          <div><b id="rec-time">0:00</b><span>歩いた時間</span></div>
+          <div><b id="rec-pts">0</b><span>記録した点</span></div>
+        </div>
+        <div class="rec-btns">
+          <button class="btn primary big" id="rec-start">記録を始める</button>
+          <button class="btn big" id="rec-pause" hidden>一時停止</button>
+          <button class="btn primary big" id="rec-resume" hidden>再開</button>
+          <button class="btn big" id="rec-stop" hidden>終えて保存</button>
+        </div>
+        <label class="switch">記録中は画面を消さない<input type="checkbox" id="rec-wake" checked></label>
+      </div>
+      <p class="note">画面を消すと、スマホによっては記録が止まります（特にiPhone）。歩くときは画面を点けたままにしてください。長い区間を歩くときは、ふだん使っている登山アプリで記録し、そのファイル（GPX）を支部に送ってもかまいません。車や電車で移動するときは「一時停止」を押してください。</p>
+      <h3>保存した記録</h3>
+      <ul class="tracks" id="tracks"></ul>
+      <label class="btn" style="margin-top:10px">ほかのアプリの記録（GPX）を読み込む<input type="file" id="gpx-in" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label>
+      <p class="note">記録はこのスマホの中だけに残ります。支部に送るときは、各記録の「送る」を押して、メールやLINEで送ってください。</p>
+    </div>
+
+    <div class="pane" id="pane-layers">
+      <h2>重ねる地質図</h2>
+      <div class="seg" id="geoseg">
+        <button aria-pressed="true" data-v="seamless">20万分の1</button>
+        <button aria-pressed="false" data-v="g50">5万分の1</button>
+        <button aria-pressed="false" data-v="none">なし</button>
+      </div>
+      <p class="note" id="g50note">5万分の1地質図幅は、四国では20面だけ公開されています（愛媛・高知西部が中心。徳島・香川の大半はありません）。</p>
+      <div class="field"><span>濃さ</span><input type="range" id="op" min="0" max="100" value="65" aria-label="地質図の濃さ"></div>
+      <label class="switch">遍路道<input type="checkbox" id="show-route" checked></label>
+      <label class="switch">札所<input type="checkbox" id="show-temple" checked></label>
+
+      <h3>電波がないとき</h3>
+      <div class="box" id="offline-info">
+        遍路道・札所・内訳は、電波がなくても見られます。地図と地質図は、一度表示した範囲だけ残ります。歩く予定の区間を、電波のある所で先に拡大して見ておいてください。
+        <div id="cache-count" class="note" style="margin-top:6px"></div>
+        <button class="btn" id="btn-clear-cache" hidden>残した地図を消す</button>
+      </div>
+
+      <h3>ホーム画面に置く</h3>
+      <div class="box">
+        <b>iPhone</b>：Safariで開き、下の共有ボタン（四角に上向きの矢印）→「ホーム画面に追加」。<br>
+        <b>Android</b>：Chromeで開き、右上の︙ →「ホーム画面に追加」（または「アプリをインストール」）。
+        <div><button class="btn primary" id="btn-install" hidden>このスマホに入れる</button></div>
+      </div>
+      <div class="credit">
+        地質図：産総研 地質調査総合センター「20万分の1日本シームレス地質図V2」「5万分の1地質図幅」<br>
+        背景図：国土地理院 地理院タイル（淡色地図）<br>
+        遍路道・札所：四国遍路世界遺産登録推進協議会「遍路道とトイレ位置案内図」を加工して作成。<br>
+        遍路道は「みち案内表示シートで案内するルート」で、遍路の文化的背景を持たない道を含みます。元の図面の縮尺の関係で、地図上の道路とずれる所があります。実際の道路状況や交通規制にしたがって、十分注意して歩いてください。
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="toast" role="status"></div>
+
+<script>
+// 途中で止まったとき、理由を操作板に出す
+function showErr(msg){
+  const e = document.getElementById("err");
+  e.style.display = "block";
+  e.insertAdjacentHTML("beforeend", "<div>" + String(msg).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + "</div>");
+}
+window.addEventListener("error", ev => showErr("表示の途中で止まりました：" + ev.message));
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous"
+  onerror="showErr('地図の部品を読み込めませんでした。インターネットにつながっているか確かめてください。')"></script>
+<script src="data.js" onerror="showErr('遍路道のデータ（data.js）が見つかりません。index.html と同じフォルダに置いてください。')"></script>
+<script>
+const D = window.HENRO, G50 = window.G50;
+const LEGEND_API = "https://gbank.gsj.jp/seamless/v2/api/1.3.1/legend.json?point=";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const cssVar = (n, f) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
+const step = (name, fn) => { try { return fn(); } catch (err) { showErr(name + "を表示できませんでした：" + err.message); } };
+const wide = () => matchMedia("(min-width:900px)").matches;
+
+function toast(msg, ms = 2600){
+  const t = $("#toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("on"), ms);
+}
+
+// ---------- 地図 ----------
+const map = L.map("map", {preferCanvas: true, zoomControl: false, zoomSnap: .25}).setView([33.75, 133.55], 8);
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", {
+  maxZoom: 18, crossOrigin: true, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>'}).addTo(map);
+const gsjAttr = '<a href="https://gbank.gsj.jp/seamless/" target="_blank">産総研 地質調査総合センター</a>';
+let tileWarned = false;
+const warnTiles = () => { if (!tileWarned) { tileWarned = true; toast("地質図の画像を受け取れませんでした。電波の状態を確かめてください。", 4000); } };
+// layer=glf：地質・境界線・断層だけ（記号の文字は入れない。寄ったときに文字が大きく引き伸ばされるため）
+const seamless = L.tileLayer("https://gbank.gsj.jp/seamless/v2/api/1.3.1/tiles/{z}/{y}/{x}.png?layer=glf",
+  {maxNativeZoom: 13, maxZoom: 18, opacity: .65, crossOrigin: true, attribution: gsjAttr}).on("tileerror", warnTiles).addTo(map);
+const g50 = L.layerGroup(), g50frames = L.layerGroup();
+step("5万分の1地質図幅", () => G50.forEach(([name, id, b]) => {
+  L.tileLayer(`https://tiles.gsj.jp/tiles/geomap/${id}/{z}/{x}/{y}.png`,
+    {bounds: b, minZoom: 8, maxNativeZoom: 14, maxZoom: 18, opacity: .65, crossOrigin: true, attribution: gsjAttr}).addTo(g50);
+  L.rectangle(b, {color: "#7a5c2e", weight: 1, fill: false, dashArray: "4 3", interactive: false}).addTo(g50frames);
+}));
+
+// 遍路道
+const routeLayer = L.featureGroup();
+let routeBounds = L.latLngBounds([[32.7, 132.0], [34.5, 134.8]]);
+step("遍路道", () => {
+  // 背景の地図は暗い画面設定でも明るいので、線の色は固定する
+  D.route.forEach(([, pts]) => L.polyline(pts, {color: "#fffdf7", weight: 6, opacity: .9, interactive: false}).addTo(routeLayer));
+  D.route.forEach(([, pts]) => L.polyline(pts, {color: "#b3261e", weight: 3, interactive: false}).addTo(routeLayer));
+  routeLayer.addTo(map);
+  routeBounds = L.latLngBounds(D.route.flatMap(r => r[1]));
+});
+const fitShikoku = () => map.fitBounds(routeBounds, wide()
+  ? {paddingTopLeft: [404, 20], paddingBottomRight: [70, 20]}
+  : {paddingTopLeft: [8, 56], paddingBottomRight: [8, 158]});
+fitShikoku();
+
+// 札所
+const sw = g => g && g.r != null ? `<span class="sw2" style="background:rgb(${g.r},${g.g},${g.b})"></span>` : "";
+const templeLayer = L.layerGroup(), templeMarkers = {};
+step("札所", () => {
+  D.temples.forEach(t => {
+    const m = L.marker([t.lat, t.lon], {icon: L.divIcon({className: "tmk", html: `<div class="tnum">${t.no}</div>`, iconSize: [26, 26]}), title: `${t.no}番 ${t.name}`})
+      .bindPopup(`<b>${t.no}番 ${esc(t.name)}</b><br><span class="note">${esc(t.addr)}</span><br>${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}`);
+    m.on("click", () => showGeo(t.geo, `${t.no}番 ${t.name}`));
+    m.addTo(templeLayer); templeMarkers[t.no] = m;
+  });
+  templeLayer.addTo(map);
+});
+const zoomClass = () => map.getContainer().classList.toggle("zoom-low", map.getZoom() < 10);
+map.on("zoomend", zoomClass); zoomClass();
+
+// ---------- 下の操作板 ----------
+const sheet = $("#sheet");
+const STATES = ["peek", "half", "full"];
+let sheetState = "peek";
+function setSheet(s){ sheetState = s; sheet.classList.toggle("half", s === "half"); sheet.classList.toggle("full", s === "full"); }
+function openTab(name, state){
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.pane === name));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + name));
+  $("#body").scrollTop = 0;
+  if (state) setSheet(state);
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => {
+  const same = b.getAttribute("aria-selected") === "true";
+  openTab(b.dataset.pane, same && sheetState !== "peek" ? "peek" : (sheetState === "peek" ? "half" : sheetState));
+}));
+// つまみを上下に引く
+(() => {
+  let y0 = null, base = 0, moved = false;
+  const H = () => sheet.getBoundingClientRect().height;
+  const offset = s => s === "full" ? 0 : s === "half" ? H() - innerHeight * .46 : H() - 150;
+  const start = e => { if (wide()) return; y0 = e.clientY; base = offset(sheetState); moved = false; sheet.classList.add("dragging"); };
+  const move = e => { if (y0 === null) return; const dy = e.clientY - y0; if (Math.abs(dy) > 4) moved = true;
+    sheet.style.transform = `translateY(${Math.min(Math.max(base + dy, 0), offset("peek"))}px)`; };
+  const end = e => { if (y0 === null) return; sheet.classList.remove("dragging"); sheet.style.transform = "";
+    const dy = e.clientY - y0; y0 = null;
+    const i = STATES.indexOf(sheetState);
+    if (!moved) setSheet(STATES[(i + 1) % 3]);
+    else if (dy < -40) setSheet(STATES[Math.min(i + (dy < -260 ? 2 : 1), 2)]);
+    else if (dy > 40) setSheet(STATES[Math.max(i - (dy > 260 ? 2 : 1), 0)]); };
+  ["#grip", "#tabs"].forEach(sel => { const el = $(sel);
+    el.addEventListener("pointerdown", e => { if (sel === "#tabs" && e.target.closest("button")) return; el.setPointerCapture(e.pointerId); start(e); });
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end); });
+})();
+
+// ---------- 地質（タップした場所） ----------
+function showGeo(g, title, latlng, extra = ""){
+  const where = title ? `<div class="note" style="margin-bottom:6px">${esc(title)}</div>` : "";
+  const pos = latlng ? `<div class="note" style="margin-top:6px">${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}</div>` : "";
+  $("#here").innerHTML = (g && g.lithology_ja
+    ? `${where}<div class="geo-card"><div class="geo-sw" style="background:rgb(${g.r},${g.g},${g.b})"></div>
+        <div><div class="geo-name">${esc(g.lithology_ja)}</div><div class="geo-age">${esc(g.formationAge_ja)}</div>
+        <span class="tag">${esc(g.group_ja)}</span> <span class="tag">記号 ${esc(g.symbol)}</span>${pos}</div></div>`
+    : `${where}<div class="note">この場所には地質の凡例がありません（海や川の上など）。</div>${pos}`) + extra;
+  openTab("geo", sheetState === "full" ? "half" : sheetState);
+}
+// 産総研の凡例を引く。電波がないときは、前に引いたことのある場所だけ答えが残っている
+async function lookupGeo(latlng, title, extra = ""){
+  $("#here").innerHTML = `<div class="note">調べています…</div>${extra}`;
+  openTab("geo");
+  try {
+    const r = await fetch(LEGEND_API + latlng.lat.toFixed(6) + "," + latlng.lng.toFixed(6));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    showGeo(await r.json(), title, latlng, extra);
+  } catch (err) {
+    $("#here").innerHTML = (navigator.onLine
+      ? `<div class="note">地質を取得できませんでした（${esc(err.message)}）。電波の状態を確かめてください。</div>`
+      : `<div class="note">電波がないため、この場所の地質は調べられません（前に調べた場所は、電波がなくても出ます）。</div>`) + extra;
+  }
+}
+let tapMarker = null;
+map.on("click", e => {
+  if (tapMarker) map.removeLayer(tapMarker);
+  tapMarker = L.circleMarker(e.latlng, {radius: 7, color: "#000", weight: 2, fillColor: "#fff", fillOpacity: 1}).addTo(map);
+  lookupGeo(e.latlng, "タップした場所");
+});
+
+// ---------- 札所の一覧 ----------
+function renderTemples(range){
+  const [a, b] = range === "all" ? [1, 88] : range.split("-").map(Number);
+  $("#tlist").innerHTML = D.temples.filter(t => t.no >= a && t.no <= b).map(t =>
+    `<li data-no="${t.no}"><div class="tno">${t.no}</div><div class="tmain">
+      <div class="tname">${esc(t.name)}<small>${esc(t.yomi)}</small></div>
+      <div class="tgeo">${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}</div></div></li>`).join("");
+}
+step("札所の一覧", () => renderTemples("all"));
+$("#tchips").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+  $("#tchips").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderTemples(b.dataset.r); });
+$("#tlist").addEventListener("click", e => { const li = e.target.closest("li"); if (!li) return;
+  const m = templeMarkers[li.dataset.no]; if (!m) return;
+  if (!wide()) setSheet("peek");
+  map.flyTo(m.getLatLng(), 15, {duration: .8});
+  map.once("moveend", () => m.openPopup()); });
+
+// ---------- 内訳 ----------
+function renderStats(pref){
+  const s = D.stats[pref], C = D.groupColor;
+  $("#stotal").textContent = `遍路道 ${s.total.toLocaleString()} km の内訳`;
+  $("#sbar").innerHTML = s.groups.map(([g, km]) => `<span title="${esc(g)}" style="width:${(km / s.total * 100).toFixed(2)}%;background:${C[g] || "#999"}"></span>`).join("");
+  $("#slegend").innerHTML = s.groups.map(([g, km]) => `<span><span class="sw2" style="background:${C[g] || "#999"}"></span>${esc(g)} ${Math.round(km / s.total * 100)}%</span>`).join("");
+  $("#slith").innerHTML = s.liths.slice(0, 15).map(l =>
+    `<div class="lrow"><div class="l"><span class="sw2" style="background:rgb(${l.rgb})"></span>${esc(l.lith)}<div class="note">${esc(l.age)}</div></div><div class="k">${l.km} km</div></div>`).join("");
+}
+step("内訳", () => renderStats("全体"));
+$("#schips").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+  $("#schips").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderStats(b.dataset.pref); });
+
+// ---------- 地図の設定 ----------
+$("#geoseg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+  $("#geoseg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  [seamless, g50, g50frames].forEach(l => map.removeLayer(l));
+  if (b.dataset.v === "seamless") seamless.addTo(map);
+  if (b.dataset.v === "g50") { g50.addTo(map); g50frames.addTo(map); if (map.getZoom() < 9) map.setZoom(9); }
+  routeLayer.bringToFront(); });
+$("#op").addEventListener("input", e => { const v = e.target.value / 100; seamless.setOpacity(v); g50.eachLayer(l => l.setOpacity(v)); });
+$("#show-route").addEventListener("change", e => e.target.checked ? routeLayer.addTo(map) : map.removeLayer(routeLayer));
+$("#show-temple").addEventListener("change", e => e.target.checked ? templeLayer.addTo(map) : map.removeLayer(templeLayer));
+
+// ---------- 右のボタン ----------
+$("#btn-home").addEventListener("click", fitShikoku);
+$("#btn-zoomin").addEventListener("click", () => map.zoomIn());
+$("#btn-zoomout").addEventListener("click", () => map.zoomOut());
+
+// ---------- 現在地 ----------
+// 2点間の距離（m）
+const distM = (a, b) => {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+// 遍路道までの最短距離（m）。線を小さな平面とみなして、各区間への垂線の長さを測る
+function distToRoute(p){
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), ky = 110540;
+  let best = Infinity;
+  for (const [, pts] of D.route) {
+    for (let i = 1; i < pts.length; i++) {
+      const ax = (pts[i - 1][1] - p.lng) * kx, ay = (pts[i - 1][0] - p.lat) * ky;
+      const bx = (pts[i][1] - p.lng) * kx, by = (pts[i][0] - p.lat) * ky;
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      const t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+      const d = Math.hypot(ax + t * dx, ay + t * dy);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+const fmtDist = m => m < 20 ? "すぐそば（20 m以内）" : m < 1000 ? `約${Math.round(m / 10) * 10} m` : `約${(m / 1000).toFixed(1)} km`;
+function nearHtml(p){
+  let nearest = null, nd = Infinity;
+  D.temples.forEach(t => { const d = distM(p, {lat: t.lat, lng: t.lon}); if (d < nd) { nd = d; nearest = t; } });
+  return `<div class="near">
+    <div><span>遍路道まで</span><b>${fmtDist(distToRoute(p))}</b></div>
+    <div><span>いちばん近い札所：${nearest.no}番 ${esc(nearest.name)}</span><b>${fmtDist(nd)}</b></div>
+    <div class="note" style="display:block">距離はまっすぐ測った長さです。</div></div>`;
+}
+
+const geo = {watch: null, pos: null, marker: null, acc: null, follow: false, firstFix: false, resume: false};
+const locBtn = $("#btn-locate");
+function stopWatch(){
+  if (geo.watch !== null) navigator.geolocation.clearWatch(geo.watch);
+  geo.watch = null;
+}
+function startWatch(){
+  geo.firstFix = true;
+  locBtn.classList.add("wait");
+  geo.watch = navigator.geolocation.watchPosition(onPos, onPosErr, {enableHighAccuracy: true, maximumAge: 10000, timeout: 30000});
+}
+function onPos(e){
+  const p = L.latLng(e.coords.latitude, e.coords.longitude);
+  geo.pos = p;
+  locBtn.classList.remove("wait"); locBtn.classList.add("on");
+  if (!geo.marker) {
+    geo.acc = L.circle(p, {radius: e.coords.accuracy, color: "#1a73e8", weight: 1, fillOpacity: .08, interactive: false}).addTo(map);
+    geo.marker = L.marker(p, {icon: L.divIcon({className: "", html: '<div class="me"></div>', iconSize: [18, 18]}), interactive: false, zIndexOffset: 1000}).addTo(map);
+  } else { geo.marker.setLatLng(p); geo.acc.setLatLng(p).setRadius(e.coords.accuracy); }
+  if (geo.follow) map.panTo(p, {animate: true});
+  if (geo.firstFix) {
+    geo.firstFix = false; geo.follow = true;
+    map.setView(p, Math.max(map.getZoom(), 15));
+    if (!routeBounds.pad(.3).contains(p)) toast("四国の遍路道から離れた場所にいるようです。", 3500);
+    if (!wide()) setSheet("half");
+    lookupGeo(p, `いまいる場所（誤差 約${Math.round(e.coords.accuracy)} m）`, nearHtml(p));
+  }
+}
+function onPosErr(err){
+  locBtn.classList.remove("wait", "on");
+  stopWatch();
+  const msg = {1: "位置情報の利用が許可されていません。スマホの設定で、このブラウザの「位置情報」を許可してください。",
+               2: "現在地がわかりませんでした。空の見える所で、もう一度押してください。",
+               3: "現在地を探すのに時間がかかっています。もう一度押してください。"}[err.code] || "現在地を取得できませんでした。";
+  toast(msg, 5000);
+}
+locBtn.addEventListener("click", () => {
+  if (!navigator.geolocation) return toast("このブラウザでは現在地を使えません。", 4000);
+  if (!window.isSecureContext) return toast("現在地は、公開した場所（https）から開いたときに使えます。", 5000);
+  if (geo.watch === null) { startWatch(); toast("現在地を探しています…"); return; }
+  if (geo.pos) {
+    // 2回目以降：現在地に戻って、足もとの地質を調べ直す
+    geo.follow = true;
+    map.setView(geo.pos, Math.max(map.getZoom(), 15));
+    if (!wide()) setSheet("half");
+    lookupGeo(geo.pos, "いまいる場所", nearHtml(geo.pos));
+  }
+});
+// 指で地図を動かしたら、現在地を追いかけるのをやめる
+map.on("dragstart", () => { geo.follow = false; });
+// 画面を閉じている間は電池の節約のため止め、戻ったら再開する
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && geo.watch !== null) { stopWatch(); geo.resume = true; }
+  else if (!document.hidden && geo.resume) { geo.resume = false; geo.watch = navigator.geolocation.watchPosition(onPos, onPosErr, {enableHighAccuracy: true, maximumAge: 10000, timeout: 30000}); }
+});
+
+// ---------- 電波がないとき ----------
+const setOnline = () => document.body.classList.toggle("offline", !navigator.onLine);
+addEventListener("online", () => { setOnline(); toast("電波が戻りました。"); });
+addEventListener("offline", () => { setOnline(); toast("電波がありません。保存した地図で表示します。", 3500); });
+setOnline();
+async function showCacheCount(){
+  if (!("caches" in window)) return;
+  try {
+    const c = await caches.open("henro-tiles");
+    const n = (await c.keys()).length;
+    $("#cache-count").textContent = `いま残っている地図の画像：${n.toLocaleString()} 枚`;
+    $("#btn-clear-cache").hidden = n === 0;
+  } catch { /* 使えない環境では何も出さない */ }
+}
+$("#btn-clear-cache").addEventListener("click", async () => {
+  if (!confirm("このスマホに残した地図の画像を消します。遍路道・札所のデータは消えません。よろしいですか？")) return;
+  await caches.delete("henro-tiles");
+  showCacheCount(); toast("残した地図の画像を消しました。");
+});
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(err => showErr("電波なしで使う仕組みを準備できませんでした：" + err.message));
+  document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => b.dataset.pane === "layers" && showCacheCount()));
+} else {
+  $("#cache-count").textContent = "※ いまはファイルを直接開いているため、電波なしで使う仕組みは働いていません。公開した場所から開くと働きます。";
+}
+
+// ---------- ホーム画面に置く（Androidは専用のボタンを出せる） ----------
+let installEvt = null;
+addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; $("#btn-install").hidden = false; });
+$("#btn-install").addEventListener("click", async () => {
+  if (!installEvt) return;
+  installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("#btn-install").hidden = true;
+});
+
+// ---------- 歩いた道の記録 ----------
+// 点は [緯度, 経度, 標高 or null, 時刻(ms)]。区切り（一時停止・画面を消していた間）ごとに別の線にする
+const REC_KEY = "henro-rec", TRACKS_KEY = "henro-tracks";
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v){
+    try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+    catch { toast("スマホの保存場所がいっぱいで、記録を残せませんでした。古い記録を送ってから消してください。", 6000); return false; }
+  },
+  del(k){ try { localStorage.removeItem(k); } catch { /* 何もしない */ } },
+};
+const rec = {data: null, watch: null, line: null, wake: null, timer: null, hiddenAt: 0};
+const recLayer = L.featureGroup().addTo(map);
+const p2ll = p => L.latLng(p[0], p[1]);
+const segKm = segs => segs.reduce((s, seg) => s + seg.reduce((a, p, i) => i ? a + distM(p2ll(seg[i - 1]), p2ll(p)) : 0, 0), 0) / 1000;
+
+// 遍路道から maxM 以内か（近くの区間だけを見るので速い）
+function nearRoute(p, maxM){
+  const dLat = maxM / 110540, dLng = maxM / (111320 * Math.cos(p.lat * Math.PI / 180));
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), ky = 110540;
+  for (const [, pts] of D.route) {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      if ((a[0] - p.lat > dLat && b[0] - p.lat > dLat) || (p.lat - a[0] > dLat && p.lat - b[0] > dLat) ||
+          (a[1] - p.lng > dLng && b[1] - p.lng > dLng) || (p.lng - a[1] > dLng && p.lng - b[1] > dLng)) continue;
+      const ax = (a[1] - p.lng) * kx, ay = (a[0] - p.lat) * ky, bx = (b[1] - p.lng) * kx, by = (b[0] - p.lat) * ky;
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      const t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+      if (Math.hypot(ax + t * dx, ay + t * dy) <= maxM) return true;
+    }
+  }
+  return false;
+}
+function nearestTempleName(p, maxM){
+  let best = null, bd = Infinity;
+  D.temples.forEach(t => { const d = distM(p, {lat: t.lat, lng: t.lon}); if (d < bd) { bd = d; best = t; } });
+  return best && bd <= maxM ? `${best.no}番${best.name}` : "";
+}
+// 記録のまとめ（距離・時間・遍路道に沿った長さ・名前）
+function summarize(segs, name, src){
+  const pts = segs.flat();
+  let onKm = 0;
+  segs.forEach(seg => {
+    let prevOn = null;
+    seg.forEach((p, i) => {
+      const on = nearRoute(p2ll(p), 60);
+      if (i && on && prevOn) onKm += distM(p2ll(seg[i - 1]), p2ll(p)) / 1000;
+      prevOn = on;
+    });
+  });
+  const first = pts[0], last = pts[pts.length - 1];
+  const sec = segs.reduce((s, seg) => s + (seg.length > 1 && seg[0][3] && seg[seg.length - 1][3] ? (seg[seg.length - 1][3] - seg[0][3]) / 1000 : 0), 0);
+  if (!name) {
+    const d = new Date(first[3] || Date.now());
+    const a = nearestTempleName(p2ll(first), 3000), b = nearestTempleName(p2ll(last), 3000);
+    name = `${d.getMonth() + 1}/${d.getDate()} ` + (a && a === b ? `${a}付近` : a || b ? `${a || "?"}付近〜${b || "?"}付近` : "の記録");
+  }
+  return {id: String(Date.now()) + Math.random().toString(36).slice(2, 6), name, src, start: first[3] || null,
+          km: segKm(segs), onKm, sec, n: pts.length, segs};
+}
+const fmtTime = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? `${h}:${String(m).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
+const fmtDur = s => { const h = Math.floor(s / 3600), m = Math.round(s % 3600 / 60); return h ? `${h}時間${m}分` : `${m}分`; };
+
+function recElapsed(){ const d = rec.data; return d ? d.elapsed + (d.running ? (Date.now() - d.runFrom) / 1000 : 0) : 0; }
+function recUI(){
+  const d = rec.data, st = $("#rec-state");
+  const km = d ? d.km : 0;
+  $("#rec-km").textContent = km.toFixed(2);
+  $("#rec-time").textContent = fmtTime(recElapsed());
+  $("#rec-pts").textContent = d ? d.segs.reduce((s, x) => s + x.length, 0).toLocaleString() : "0";
+  st.className = "rec-state" + (d ? (d.running ? " on" : " paused") : "");
+  st.textContent = !d ? "記録していません" : d.running ? "記録しています" : "一時停止中";
+  $("#rec-start").hidden = !!d;
+  $("#rec-pause").hidden = !(d && d.running);
+  $("#rec-resume").hidden = !(d && !d.running);
+  $("#rec-stop").hidden = !d;
+  const pill = $("#rec-pill");
+  pill.hidden = !d;
+  pill.classList.toggle("paused", !!d && !d.running);
+  pill.firstChild.textContent = d && !d.running ? "一時停止中 " : "記録中 ";
+  $("#rec-pill-km").textContent = km.toFixed(2) + " km";
+}
+function drawRec(){
+  recLayer.clearLayers();
+  if (!rec.data) { rec.line = null; return; }
+  rec.data.segs.forEach((seg, i) => {
+    const l = L.polyline(seg.map(p2ll), {color: "#1a73e8", weight: 5, opacity: .9, interactive: false}).addTo(recLayer);
+    if (i === rec.data.segs.length - 1) rec.line = l;
+  });
+}
+async function keepAwake(on){
+  try {
+    if (on && $("#rec-wake").checked && "wakeLock" in navigator && !rec.wake) {
+      rec.wake = await navigator.wakeLock.request("screen");
+      rec.wake.addEventListener("release", () => { rec.wake = null; });
+    } else if (!on && rec.wake) { await rec.wake.release(); rec.wake = null; }
+  } catch { /* 画面を点けたままにできない環境では何もしない */ }
+}
+function onRecPos(e){
+  const d = rec.data; if (!d || !d.running) return;
+  if (e.coords.accuracy > 50) return;                       // 誤差の大きい点は使わない
+  const p = [+e.coords.latitude.toFixed(7), +e.coords.longitude.toFixed(7),
+             e.coords.altitude == null ? null : +e.coords.altitude.toFixed(1), e.timestamp || Date.now()];
+  const seg = d.segs[d.segs.length - 1], last = seg[seg.length - 1];
+  if (last) {
+    const m = distM(p2ll(last), p2ll(p)), dt = Math.max((p[3] - last[3]) / 1000, 1);
+    if (m < 5) return;                                      // ほとんど動いていない
+    if (m / dt > 30) return;                                // 位置の飛び（時速100km以上）
+    d.km += m / 1000;
+  }
+  seg.push(p);
+  if (rec.line) rec.line.addLatLng(p2ll(p)); else drawRec();
+  store.set(REC_KEY, d);
+  recUI();
+}
+function recRun(){
+  const d = rec.data;
+  d.running = true; d.runFrom = Date.now();
+  if (d.segs[d.segs.length - 1].length) d.segs.push([]);
+  drawRec();
+  rec.watch = navigator.geolocation.watchPosition(onRecPos, err => {
+    if (err.code === 1) { toast("位置情報が許可されていないため、記録できません。", 5000); recPause(); }
+  }, {enableHighAccuracy: true, maximumAge: 0, timeout: 60000});
+  clearInterval(rec.timer); rec.timer = setInterval(recUI, 1000);
+  keepAwake(true);
+  if (geo.watch === null) startWatch();   // 現在地の青い点も出す
+  store.set(REC_KEY, d); recUI();
+}
+function recPause(){
+  const d = rec.data; if (!d) return;
+  if (d.running) d.elapsed += (Date.now() - d.runFrom) / 1000;
+  d.running = false;
+  if (rec.watch !== null) navigator.geolocation.clearWatch(rec.watch);
+  rec.watch = null; clearInterval(rec.timer); keepAwake(false);
+  store.set(REC_KEY, d); recUI();
+}
+$("#rec-start").addEventListener("click", () => {
+  if (!navigator.geolocation) return toast("このブラウザでは記録できません。", 4000);
+  if (!window.isSecureContext) return toast("記録は、公開した場所（https）から開いたときに使えます。", 5000);
+  rec.data = {start: Date.now(), segs: [[]], km: 0, elapsed: 0, running: false, runFrom: 0};
+  recRun(); toast("記録を始めました。");
+});
+$("#rec-pause").addEventListener("click", () => { recPause(); toast("一時停止しました。歩き出すときは「再開」を押してください。", 3500); });
+$("#rec-resume").addEventListener("click", () => { recRun(); toast("記録を再開しました。"); });
+$("#rec-stop").addEventListener("click", () => {
+  recPause();
+  const segs = rec.data.segs.filter(s => s.length);
+  const n = segs.reduce((s, x) => s + x.length, 0);
+  if (n < 2) {
+    if (!confirm("記録した点がほとんどありません。保存せずに終えますか？")) return;
+  } else {
+    const t = summarize(segs, "", "rec");
+    t.sec = rec.data.elapsed;                // 歩いた時間は一時停止を除いた長さ
+    const list = store.get(TRACKS_KEY, []);
+    list.unshift(t);
+    if (!store.set(TRACKS_KEY, list)) return;  // 残せなかったときは、記録中のデータを消さない
+    toast(`保存しました：${t.name}`, 3500);
+  }
+  rec.data = null; store.del(REC_KEY); drawRec(); recUI(); renderTracks();
+});
+$("#rec-pill").addEventListener("click", () => openTab("rec", "half"));
+$("#rec-wake").addEventListener("change", e => keepAwake(e.target.checked && !!rec.data?.running));
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { rec.hiddenAt = Date.now(); return; }
+  if (!rec.data || !rec.data.running) return;
+  keepAwake(true);
+  const seg = rec.data.segs[rec.data.segs.length - 1], last = seg[seg.length - 1];
+  const gap = last ? (Date.now() - last[3]) / 1000 : 0;
+  if (rec.hiddenAt && gap > 120) {
+    rec.data.segs.push([]); drawRec(); store.set(REC_KEY, rec.data);
+    toast(`画面を消していた約${Math.round(gap / 60)}分のあいだ、記録が止まっていたかもしれません。`, 6000);
+  }
+  rec.hiddenAt = 0;
+});
+// 前回の記録が途中で残っていたら、一時停止の状態で戻す
+step("記録の続き", () => {
+  const d = store.get(REC_KEY, null);
+  if (d && d.segs) {
+    if (d.running) { d.elapsed += Math.max(0, ((d.segs.flat().at(-1)?.[3] || d.runFrom) - d.runFrom) / 1000); d.running = false; }
+    rec.data = d; drawRec(); store.set(REC_KEY, d);
+    toast("前回の記録の途中です。続けるときは「記録」タブで「再開」を押してください。", 5000);
+  }
+  recUI();
+});
+
+// ---------- 保存した記録の一覧・地図に出す・送る ----------
+const shownTracks = {};
+const trackLayer = L.featureGroup().addTo(map);
+function toggleTrack(t){
+  if (shownTracks[t.id]) { trackLayer.removeLayer(shownTracks[t.id]); delete shownTracks[t.id]; renderTracks(); return; }
+  const g = L.featureGroup(t.segs.filter(s => s.length > 1).map(s => L.polyline(s.map(p2ll), {color: "#7b3fa0", weight: 5, opacity: .85})))
+    .bindPopup(`<b>${esc(t.name)}</b><br>${t.km.toFixed(2)} km`);
+  shownTracks[t.id] = g.addTo(trackLayer);
+  if (!wide()) setSheet("peek");
+  map.fitBounds(g.getBounds(), {padding: [40, 40], maxZoom: 16});
+  renderTracks();
+}
+function renderTracks(){
+  const list = store.get(TRACKS_KEY, []);
+  $("#tracks").innerHTML = list.length ? list.map(t => `<li data-id="${t.id}">
+      <div class="tn">${esc(t.name)}</div>
+      <div class="ts">${t.km.toFixed(2)} km${t.sec ? "・" + fmtDur(t.sec) : ""}・遍路道に沿って ${t.onKm.toFixed(2)} km${t.src === "import" ? "・読み込み" : ""}</div>
+      <div class="ta"><button class="btn" data-act="show">${shownTracks[t.id] ? "地図から外す" : "地図で見る"}</button>
+        <button class="btn primary" data-act="send">送る</button>
+        <button class="btn" data-act="save">ファイルに保存</button>
+        <button class="btn" data-act="del">消す</button></div></li>`).join("")
+    : '<li class="empty">まだ記録はありません。</li>';
+}
+const xmlEsc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
+function buildGpx(t){
+  const pt = p => `<trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}">` +
+    (p[2] != null ? `<ele>${(+p[2]).toFixed(1)}</ele>` : "") + (p[3] ? `<time>${new Date(p[3]).toISOString()}</time>` : "") + "</trkpt>";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="ジオ遍路（試作）" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata><name>${xmlEsc(t.name)}</name>${t.start ? `<time>${new Date(t.start).toISOString()}</time>` : ""}</metadata>
+<trk><name>${xmlEsc(t.name)}</name><desc>${xmlEsc(`距離 ${t.km.toFixed(2)} km／遍路道に沿って ${t.onKm.toFixed(2)} km`)}</desc>
+${t.segs.filter(s => s.length).map(s => "<trkseg>\n" + s.map(pt).join("\n") + "\n</trkseg>").join("\n")}
+</trk>
+</gpx>
+`;
+}
+function gpxFile(t){
+  const d = new Date(t.start || Date.now()), z = n => String(n).padStart(2, "0");
+  const fn = `henro_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.gpx`;
+  return new File([buildGpx(t)], fn, {type: "application/gpx+xml"});
+}
+function saveFile(f){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(f); a.download = f.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+$("#tracks").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const id = b.closest("li").dataset.id, list = store.get(TRACKS_KEY, []), t = list.find(x => x.id === id);
+  if (!t) return;
+  if (b.dataset.act === "show") toggleTrack(t);
+  if (b.dataset.act === "save") { saveFile(gpxFile(t)); toast("ファイル（GPX）に保存しました。"); }
+  if (b.dataset.act === "send") {
+    const f = gpxFile(t);
+    if (navigator.canShare && navigator.canShare({files: [f]})) {
+      try { await navigator.share({files: [f], title: t.name, text: `ジオ遍路の記録：${t.name}（${t.km.toFixed(2)} km）`}); }
+      catch (err) { if (err.name !== "AbortError") toast("送れませんでした。「ファイルに保存」してから送ってください。", 4000); }
+    } else { saveFile(f); toast("このブラウザでは直接送れないため、ファイルに保存しました。メールに添付して送ってください。", 5000); }
+  }
+  if (b.dataset.act === "del") {
+    if (!confirm(`「${t.name}」を消します。消すと元に戻せません。支部に送り終えていますか？`)) return;
+    if (shownTracks[id]) { trackLayer.removeLayer(shownTracks[id]); delete shownTracks[id]; }
+    store.set(TRACKS_KEY, list.filter(x => x.id !== id)); renderTracks();
+  }
+});
+// ほかのアプリの記録（GPX）を読み込む
+function parseGpx(text, filename){
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("GPXファイルとして読めませんでした");
+  const ptOf = el => {
+    const ele = el.getElementsByTagName("ele")[0], tm = el.getElementsByTagName("time")[0];
+    return [+(+el.getAttribute("lat")).toFixed(7), +(+el.getAttribute("lon")).toFixed(7),
+            ele ? +(+ele.textContent).toFixed(1) : null, tm ? Date.parse(tm.textContent) || null : null];
+  };
+  let segs = [...doc.getElementsByTagName("trkseg")].map(s => [...s.getElementsByTagName("trkpt")].map(ptOf));
+  if (!segs.some(s => s.length)) segs = [...doc.getElementsByTagName("rte")].map(r => [...r.getElementsByTagName("rtept")].map(ptOf));
+  segs = segs.map(s => s.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))).filter(s => s.length);
+  if (!segs.length) throw new Error("道の記録（点）が入っていませんでした");
+  const nm = doc.querySelector("trk > name, metadata > name, rte > name");
+  return summarize(segs, (nm && nm.textContent.trim()) || filename.replace(/\.gpx$/i, ""), "import");
+}
+$("#gpx-in").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = "";
+  for (const f of files) {
+    try {
+      const t = parseGpx(await f.text(), f.name);
+      const list = store.get(TRACKS_KEY, []); list.unshift(t);
+      if (store.set(TRACKS_KEY, list)) { renderTracks(); toggleTrack(t); toast(`読み込みました：${t.name}（${t.km.toFixed(2)} km）`, 4000); }
+    } catch (err) { toast(`${f.name}：${err.message}`, 5000); }
+  }
+});
+step("保存した記録", renderTracks);
+
+// アドレスの後ろの指定で開き方を変える（例：?tab=temple&sheet=half、?at=33.5,133.2）
+step("開き方の指定", () => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("tab")) openTab(q.get("tab"), q.get("sheet") || "half");
+  const at = (q.get("at") || "").split(",").map(Number);
+  if (at.length === 2 && at.every(Number.isFinite)) {
+    map.setView(at, 12);
+    map.fire("click", {latlng: L.latLng(at)});
+  }
+});
+</script>
+</body>
+</html>

@@ -317,7 +317,14 @@ function showErr(msg){
   e.style.display = "block";
   e.insertAdjacentHTML("beforeend", "<div>" + String(msg).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + "</div>");
 }
-window.addEventListener("error", ev => showErr("表示の途中で止まりました：" + ev.message));
+// ページ全体のエラーは画面に出さない。ブラウザが自分で入れている部品（Braveのウォレットやリーダー機能など）の
+// エラーも同じ経路で届き、ジオ遍路のものと見分けられないため（2026-11-27、iPhoneのBraveで誤表示）。
+// かわりに、ジオ遍路の準備が最後まで済んだかだけを見て、済んでいなければ1行知らせる。
+// 地図の部品やデータの読み込み失敗は、それぞれの script の onerror で知らせる。
+window.addEventListener("error", ev => console.warn("[ジオ遍路] エラー（画面には出さない）:", ev.message));
+window.addEventListener("load", () => setTimeout(() => {
+  if (!window.__henroReady) showErr("アプリの準備が途中で止まりました。再読み込みしても直らないときは、事務局に画面の写しを送ってください。");
+}, 3000));
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous"
   onerror="showErr('地図の部品を読み込めませんでした。インターネットにつながっているか確かめてください。')"></script>
@@ -914,6 +921,7 @@ step("開き方の指定", () => {
     map.fire("click", {latlng: L.latLng(at)});
   }
 });
+window.__henroReady = true;   // ここまで来れば準備完了（途中で止まったときの知らせに使う）
 </script>
 </body>
 </html>

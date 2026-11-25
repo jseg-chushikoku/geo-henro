@@ -3,7 +3,7 @@
 // - 地図・地質図の画像：一度表示したものを残し、次からは手元のものを使う（上限あり）
 // - 地質の問い合わせ：まずネットに聞き、だめなら前に聞いた答えを使う
 // アプリを直したら VERSION を上げる。
-const VERSION = "2026-11-13-1";
+const VERSION = "2026-11-26-1";
 const SHELL = "henro-shell-" + VERSION;
 const TILES = "henro-tiles";
 const API = "henro-api";

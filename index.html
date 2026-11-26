@@ -177,6 +177,14 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 .tracks .ts{font-size:12px;color:var(--muted)}
 .tracks .ta{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
 .tracks .ta .btn{margin-top:0;padding:5px 12px;font-size:12.5px}
+/* 電波なし用に地図を保存 */
+#dl-box{margin-top:8px}
+#dl-box .dl-how{margin:0 0 8px;font-size:13px}
+#dl-box .dl-detail{display:block}
+#dl-box .dl-detail .seg{margin:4px 0 6px}
+#dl-prog{margin-top:8px;font-size:13px}
+#dl-prog .dl-bar{height:8px;border-radius:4px;background:var(--paper);overflow:hidden;margin-bottom:4px}
+#dl-prog .dl-bar i{display:block;height:100%;width:0;background:#e65100;transition:width .2s}
 .tracks .empty{color:var(--muted);font-size:13px;border:0}
 #rec-pill{position:fixed;z-index:1000;left:12px;bottom:calc(var(--peek) + 46px);border:0;border-radius:999px;background:#d93025;color:#fff;
   font-size:13px;font-weight:700;padding:7px 14px;box-shadow:var(--shadow);display:flex;gap:8px;align-items:center;cursor:pointer}
@@ -369,7 +377,14 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 
       <h3>電波がないとき</h3>
       <div class="box" id="offline-info">
-        遍路道・札所・内訳は、電波がなくても見られます。地図と地質図は、一度表示した範囲だけ残ります。歩く予定の区間を、電波のある所で先に拡大して見ておいてください。
+        遍路道・札所・内訳は、電波がなくても見られます。地図と地質図は、<b>保存した範囲</b>と、一度表示した範囲だけ出ます。
+        <div id="dl-box" hidden>
+          <p class="dl-how">歩く予定の区間を地図に出してから（電波のある所・できればWi-Fiで）下のボタンを押すと、その範囲の地図と地質図（20万分の1・5万分の1）をこのスマホに保存します。計画の道をGPXで読み込んだときは、「記録」タブの一覧の「この道の周りを電波なし用に保存」で、道に沿って保存できます。</p>
+          <div class="field dl-detail"><span>くわしさ</span>
+            <div class="seg" id="dl-zoom"><button type="button" data-z="16" aria-pressed="true">ふつう（〜1/1万）</button><button type="button" data-z="17" aria-pressed="false">くわしい（〜1/5千）</button></div></div>
+          <button class="btn primary" id="btn-dl-view" type="button">表示中の範囲を電波なし用に保存</button>
+          <div id="dl-prog" hidden><div class="dl-bar"><i></i></div><span class="dl-txt"></span> <button class="btn" id="btn-dl-stop" type="button">止める</button></div>
+        </div>
         <div id="cache-count" class="note" style="margin-top:6px"></div>
         <button class="btn" id="btn-clear-cache" hidden>残した地図を消す</button>
       </div>
@@ -799,21 +814,164 @@ const setOnline = () => document.body.classList.toggle("offline", !navigator.onL
 addEventListener("online", () => { setOnline(); toast("電波が戻りました。"); });
 addEventListener("offline", () => { setOnline(); toast("電波がありません。保存した地図で表示します。", 3500); });
 setOnline();
+// 地図の画像の置き場所は2つ。henro-tiles＝見ながら残ったもの（上限があり古いものから入れ替わる）、
+// henro-tiles-saved＝「電波なし用に保存」で残したもの（入れ替わらない。消すのは本人だけ）。sw.js と同じ名前にする
+const TILE_CACHE = "henro-tiles", SAVED_CACHE = "henro-tiles-saved";
 async function showCacheCount(){
   if (!("caches" in window)) return;
   try {
-    const c = await caches.open("henro-tiles");
-    const n = (await c.keys()).length;
-    $("#cache-count").textContent = `いま残っている地図の画像：${n.toLocaleString()} 枚`;
-    $("#btn-clear-cache").hidden = n === 0;
+    const n = (await (await caches.open(TILE_CACHE)).keys()).length, s = (await (await caches.open(SAVED_CACHE)).keys()).length;
+    $("#cache-count").innerHTML = `保存した範囲の地図の画像：<b>${s.toLocaleString()} 枚</b>（消えません）<br>見ながら残った画像：${n.toLocaleString()} 枚（古いものから入れ替わります）`;
+    $("#btn-clear-cache").hidden = n + s === 0;
   } catch { /* 使えない環境では何も出さない */ }
 }
 $("#btn-clear-cache").addEventListener("click", async () => {
-  if (!confirm("このスマホに残した地図の画像を消します。遍路道・札所のデータは消えません。よろしいですか？")) return;
-  await caches.delete("henro-tiles");
+  if (dl.busy) return toast("保存しているあいだは消せません。先に「止める」を押してください。", 4000);
+  if (!confirm("このスマホに残した地図の画像（保存した範囲も含む）を全部消します。遍路道・札所・記録・写真は消えません。よろしいですか？")) return;
+  await caches.delete(TILE_CACHE); await caches.delete(SAVED_CACHE);
   showCacheCount(); toast("残した地図の画像を消しました。");
 });
+
+// ---------- 電波なし用に地図を保存（表示中の範囲／道の周り） ----------
+// 背景の地図（〜くわしさ）・20万分の1地質図（〜13。それより寄ったときは13の画像を引き伸ばして使う）・5万分の1地質図幅（〜14・図幅の範囲だけ）
+const DL_MAX = 6000;            // 1回に保存する上限（約90 MB）。地理院・産総研のサーバーに負担をかけすぎないため
+const DL_KB = 15;               // 1枚あたりの大きさの目安
+const DL_MINZ = 10;             // 広く見たとき用に、この縮尺から保存する
+const dl = {busy: false, stop: false, maxZ: 16, frame: null};
+const tileX = (lon, z) => Math.floor((lon + 180) / 360 * 2 ** z);
+const tileY = (lat, z) => { const r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z); };
+const tileUrls = {
+  pale: (z, x, y) => `https://cyberjapandata.gsi.go.jp/xyz/pale/${z}/${x}/${y}.png`,
+  seamless: (z, x, y) => `https://gbank.gsj.jp/seamless/v2/api/1.3.1/tiles/${z}/${y}/${x}.png?layer=glf`,
+  g50: id => (z, x, y) => `https://tiles.gsj.jp/tiles/geomap/${id}/${z}/${x}/${y}.png`,
+};
+// 範囲（南・西・北・東）のリストから、保存する画像のアドレスを集める（重なりは1つにする）
+function dlPlan(boxes, maxZ){
+  const urls = new Set();
+  const add = (fn, z, s, w, n, e) => {
+    for (let x = tileX(w, z); x <= tileX(e, z); x++) for (let y = tileY(n, z); y <= tileY(s, z); y++) urls.add(fn(z, x, y));
+  };
+  for (const [s, w, n, e] of boxes) {
+    for (let z = DL_MINZ; z <= maxZ; z++) add(tileUrls.pale, z, s, w, n, e);
+    for (let z = DL_MINZ; z <= 13; z++) add(tileUrls.seamless, z, s, w, n, e);
+    for (const [, id, b] of G50) {
+      const S = Math.max(s, b[0][0]), W = Math.max(w, b[0][1]), N = Math.min(n, b[1][0]), E = Math.min(e, b[1][1]);
+      if (S < N && W < E) for (let z = DL_MINZ; z <= 14; z++) add(tileUrls.g50(id), z, S, W, N, E);
+    }
+    if (urls.size > DL_MAX * 3) break;   // 広すぎるときは数えきらずに打ち切る
+  }
+  return [...urls];
+}
+// 道（[[緯度,経度],…]の区間のリスト）の両側 bufM メートルを、小さな四角の集まりにする
+function routeBoxes(segs, bufM = 300){
+  const boxes = [], dLat = bufM / 111000;
+  for (const s of segs) {
+    let last = null;
+    for (const q of s) {
+      if (last && Math.hypot(q[0] - last[0], (q[1] - last[1]) * Math.cos(q[0] * Math.PI / 180)) * 111000 < bufM) continue;   // 近すぎる点は飛ばす
+      if (last) {   // 間があいているときは点を足す
+        const steps = Math.ceil(Math.hypot(q[0] - last[0], (q[1] - last[1]) * Math.cos(q[0] * Math.PI / 180)) * 111000 / bufM);
+        for (let i = 1; i < steps; i++) boxes.push(last[0] + (q[0] - last[0]) * i / steps, last[1] + (q[1] - last[1]) * i / steps);
+      }
+      boxes.push(q[0], q[1]); last = q;
+    }
+    if (s.length && last !== s.at(-1)) boxes.push(s.at(-1)[0], s.at(-1)[1]);
+  }
+  const out = [];
+  for (let i = 0; i < boxes.length; i += 2) {
+    const lat = boxes[i], lon = boxes[i + 1], dLon = dLat / Math.cos(lat * Math.PI / 180);
+    out.push([lat - dLat, lon - dLon, lat + dLat, lon + dLon]);
+  }
+  return out;
+}
+function dlShow(done, total, fail){
+  $("#dl-prog").hidden = false;
+  $("#dl-prog .dl-bar i").style.width = (total ? done / total * 100 : 0) + "%";
+  $("#dl-prog .dl-txt").textContent = `保存しています　${done.toLocaleString()} / ${total.toLocaleString()} 枚${fail ? `（受け取れなかった ${fail} 枚）` : ""}`;
+}
+async function dlRun(urls, label){
+  if (dl.busy) return toast("いま保存しています。終わるまでお待ちください。", 3500);
+  if (!navigator.onLine) return toast("電波がありません。電波のある所（できればWi-Fi）で保存してください。", 4500);
+  if (!urls.length) return;
+  if (urls.length > DL_MAX) return toast(`範囲が広すぎます（約${urls.length.toLocaleString()}枚。1回に${DL_MAX.toLocaleString()}枚まで）。地図をもう少し寄せるか、くわしさを「ふつう」にするか、何回かに分けてください。`, 7000);
+  const saved = await caches.open(SAVED_CACHE), seen = await caches.open(TILE_CACHE);
+  const have = new Set((await saved.keys()).map(r => r.url)), todo = urls.filter(u => !have.has(u));
+  const mb = Math.max(1, Math.round(todo.length * DL_KB / 1024));
+  if (!todo.length) { toast(`${label}は、もう保存してあります。`, 3500); return; }
+  await new Promise(ok => setTimeout(ok, 350));   // 保存する範囲の枠を先に見せる
+  if (!confirm(`${label}の地図と地質図を、このスマホに保存します。\n\n画像 ${todo.length.toLocaleString()} 枚・約 ${mb} MB（保存済みの ${(urls.length - todo.length).toLocaleString()} 枚は除く）\n\n電波のある所（できればWi-Fi）で行ってください。途中で止めることもできます。保存しますか？`)) return false;
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  Object.assign(dl, {busy: true, stop: false});
+  $("#btn-dl-view").disabled = true;
+  let done = 0, fail = 0, i = 0;
+  dlShow(0, todo.length, 0);
+  const worker = async () => {
+    while (i < todo.length && !dl.stop) {
+      const u = todo[i++];
+      try {
+        let res = await seen.match(u);   // 見ながら残っていたものは、それを使う（取りに行かない）
+        if (res) await seen.delete(u);
+        else {
+          // cache:"no-store" の印で、電波なしの仕組み（sw.js）に「見ながら残す」側へ入れないよう知らせる
+          res = await fetch(u, {mode: "cors", cache: "no-store"});
+          if (!res.ok) throw new Error(res.status);
+        }
+        await saved.put(u, res);
+      } catch (err) {
+        fail++;
+        if (err.name === "QuotaExceededError") { dl.stop = true; toast("スマホの空き容量が足りなくなったため止めました。", 6000); }
+      }
+      done++;
+      if (done % 10 === 0 || done === todo.length) dlShow(done, todo.length, fail);
+    }
+  };
+  try { await Promise.all([worker(), worker(), worker(), worker()]); }   // 同時に4枚まで（ふつうに地図を見るときと同じくらい）
+  finally {
+    const stopped = dl.stop;
+    Object.assign(dl, {busy: false, stop: false});
+    $("#btn-dl-view").disabled = false; $("#dl-prog").hidden = true;
+    if (dl.frame) { map.removeLayer(dl.frame); dl.frame = null; }
+    showCacheCount();
+    const ok = done - fail;
+    toast(stopped ? `途中で止めました（${ok.toLocaleString()} 枚を保存）。もう一度押すと、続きから保存します。`
+      : fail ? `保存しました（${ok.toLocaleString()} 枚）。受け取れなかった ${fail} 枚は、もう一度押すと取り直します。`
+      : `保存しました（${ok.toLocaleString()} 枚）。電波がなくても、この範囲の地図と地質図が出ます。`, 6000);
+  }
+  return true;
+}
+function dlFrame(layer){
+  if (dl.frame) map.removeLayer(dl.frame);
+  dl.frame = layer.addTo(map);
+}
+$("#dl-zoom").addEventListener("click", e => {
+  const b = e.target.closest("[data-z]"); if (!b) return;
+  dl.maxZ = +b.dataset.z; $("#dl-zoom").querySelectorAll("[data-z]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+});
+$("#btn-dl-view").addEventListener("click", async () => {
+  if (dl.busy) return;
+  if (map.getZoom() < 11) return toast("範囲が広すぎます。歩く予定の区間が画面いっぱいになるくらいまで地図を寄せてから押してください。", 6000);
+  // スマホでは操作板を下げ、上の名札と下の操作板に隠れない、地図が見えている部分だけを保存する
+  if (!wide()) setSheet("peek");
+  const size = map.getSize(), top = wide() ? 0 : 56, bottom = wide() ? size.y : size.y - 158;
+  const a = map.containerPointToLatLng([0, top]), b = map.containerPointToLatLng([size.x, bottom]);
+  const box = [Math.min(a.lat, b.lat), Math.min(a.lng, b.lng), Math.max(a.lat, b.lat), Math.max(a.lng, b.lng)];
+  dlFrame(L.rectangle([[box[0], box[1]], [box[2], box[3]]], {color: "#e65100", weight: 2, dashArray: "6 4", fill: false, interactive: false}));
+  const go = await dlRun(dlPlan([box], dl.maxZ), "オレンジの枠の範囲");
+  if (go !== true && dl.frame) { map.removeLayer(dl.frame); dl.frame = null; }
+});
+$("#btn-dl-stop").addEventListener("click", () => { dl.stop = true; });
+// 保存した記録・読み込んだ計画の道（GPX）に沿って保存する
+async function dlTrack(t){
+  if (dl.busy) return toast("いま保存しています。終わるまでお待ちください。", 3500);
+  const segs = t.segs.filter(s => s.length).map(s => s.map(q => [q[0], q[1]]));
+  if (!segs.length) return;
+  if (!shownTracks[t.id]) toggleTrack(t);
+  dlFrame(L.featureGroup(segs.map(s => L.polyline(s, {color: "#e65100", weight: 22, opacity: .25, interactive: false}))));
+  const go = await dlRun(dlPlan(routeBoxes(segs), dl.maxZ), `「${t.name}」の道の両側 約300 m`);
+  if (go !== true && dl.frame) { map.removeLayer(dl.frame); dl.frame = null; }
+}
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  $("#dl-box").hidden = false;
   navigator.serviceWorker.register("sw.js").catch(err => showErr("電波なしで使う仕組みを準備できませんでした：" + err.message));
   document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => b.dataset.pane === "layers" && showCacheCount()));
 } else {
@@ -1468,6 +1626,7 @@ function renderTracks(){
         <button class="btn" data-act="save">ファイルに保存</button>
         ${t.src === "rec" ? `<button class="btn" data-act="replace">道をほかのアプリのGPXに差し替え</button>` : ""}
         ${t.orig ? `<button class="btn" data-act="restore">元の道に戻す</button>` : ""}
+        ${"caches" in window && location.protocol.startsWith("http") ? `<button class="btn" data-act="dl">この道の周りを電波なし用に保存</button>` : ""}
         <button class="btn" data-act="del">消す</button></div></li>`).join("")
     : '<li class="empty">まだ記録はありません。</li>';
 }
@@ -1664,6 +1823,7 @@ $("#tracks").addEventListener("click", async e => {
   if (b.dataset.act === "show") toggleTrack(t);
   if (b.dataset.act === "replace") { replaceTarget = id; $("#gpx-replace").click(); }
   if (b.dataset.act === "restore") restoreTrack(id);
+  if (b.dataset.act === "dl") dlTrack(t);
   if (b.dataset.act === "save" || b.dataset.act === "send") {
     // 写真のある記録は ZIP（GPX＋写真＋一覧表＋Google Earth用）、ない記録は GPX だけ
     let f;

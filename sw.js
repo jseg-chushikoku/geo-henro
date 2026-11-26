@@ -1,11 +1,13 @@
 // ジオ遍路：電波がないときも使えるようにする仕組み（サービスワーカー）
 // - アプリ本体とデータ：手元に残したものをすぐ出し、裏で新しい版を取りに行く
 // - 地図・地質図の画像：一度表示したものを残し、次からは手元のものを使う（上限あり）
+//   「電波なし用に保存」で残したもの（henro-tiles-saved）は別の置き場所で、上限で消えない。いちばん先に使う
 // - 地質の問い合わせ：まずネットに聞き、だめなら前に聞いた答えを使う
 // アプリを直したら VERSION を上げる。
-const VERSION = "2026-11-28-3";
+const VERSION = "2026-11-28-5";
 const SHELL = "henro-shell-" + VERSION;
 const TILES = "henro-tiles";
+const SAVED = "henro-tiles-saved";   // index.html の SAVED_CACHE と同じ名前
 const API = "henro-api";
 const TILE_MAX = 4000;   // 地図の画像を残す上限（約60〜100 MB）
 const API_MAX = 500;
@@ -45,6 +47,8 @@ async function trim(name, max){
 }
 
 async function cacheFirst(req){
+  const keep = await (await caches.open(SAVED)).match(req, {ignoreVary: true});   // 保存のときと地図の表示のときで、受け取る形式の指定（Accept）が違っても同じ画像として使う
+  if (keep) return keep;
   const c = await caches.open(TILES);
   const hit = await c.match(req);
   if (hit) return hit;
@@ -82,7 +86,8 @@ self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const u = new URL(req.url);
-  if (isTile(u)) return e.respondWith(cacheFirst(req));
+  // 「電波なし用に保存」が取りに行く画像（cache:"no-store" の印）は、ここでは何もしない（アプリ側が保存する）
+  if (isTile(u)) return req.cache === "no-store" ? undefined : e.respondWith(cacheFirst(req));
   if (isLegend(u)) return e.respondWith(networkFirst(req));
   if (u.origin === location.origin || u.hostname === "cdnjs.cloudflare.com" ||
       u.hostname === "fonts.googleapis.com" || u.hostname === "fonts.gstatic.com")

@@ -1202,6 +1202,157 @@ function gpxFile(t){
   const fn = `henro_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.gpx`;
   return new File([buildGpx(t)], fn, {type: "application/gpx+xml"});
 }
+
+// ---------- 写真つきで送る（ZIP）：GPX＋位置と向きを書き込んだ写真＋一覧表＋Google Earth用＋説明書き ----------
+const enc = new TextEncoder();
+const z2 = n => String(n).padStart(2, "0");
+const stamp = (t, sep1 = "", sep2 = "_", sep3 = "") => { const d = new Date(t); return `${d.getFullYear()}${sep1}${z2(d.getMonth() + 1)}${sep1}${z2(d.getDate())}${sep2}${z2(d.getHours())}${sep3}${z2(d.getMinutes())}${sep3}${z2(d.getSeconds())}`; };
+const photoFileName = (p, i) => `P${z2(i + 1)}_${stamp(p.t)}.jpg`;
+const headingText = p => p.heading == null ? "向きなし" : `${dirName(p.heading)}（真北から時計回り・${p.headingSrc === "manual" ? "手で直した" : "方位磁針"}）`;
+function memoLines(p){
+  return [`撮影日時：${stamp(p.t, "/", " ", ":")}`, `撮影方向：${headingText(p)}`,
+          `位置：${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}（誤差 約${Math.round(p.acc || 0)} m）`,
+          `地質（自動・産総研シームレス地質図）：${p.geo ? `${p.geo.lithology_ja}（${p.geo.formationAge_ja}）` : "未取得"}`,
+          `地質（撮影者）：${p.geoObs || ""}`, `地質構造：${p.structure || ""}`, `コメント：${p.note || ""}`];
+}
+
+// ZIP（圧縮なしで束ねるだけ。写真はもともと圧縮されているため）。ファイル名はUTF-8の印つき
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8){ let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files){
+  const parts = [], cd = []; let off = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), d = new Date(f.date || Date.now());
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(10, time, true); lh.setUint16(12, date, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true);
+    parts.push(lh.buffer, name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(12, time, true); ch.setUint16(14, date, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
+    cd.push(ch.buffer, name);
+    off += 30 + name.length + size;
+  }
+  const cdSize = cd.reduce((s, b) => s + b.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cd, end.buffer], {type: "application/zip"});
+}
+
+// 写真ファイルの中に、位置・撮影方向・日時・メモを書き込む（Exif）。地図ソフトや写真ソフトで読める形
+function buildExif(p, title){
+  const u16 = v => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; };
+  const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; };
+  const rat = arr => { const b = new Uint8Array(8 * arr.length), dv = new DataView(b.buffer); arr.forEach(([n, d], i) => { dv.setUint32(i * 8, n, true); dv.setUint32(i * 8 + 4, d, true); }); return b; };
+  const ascii = s => enc.encode(s.replace(/[^\x20-\x7e]/g, "?") + "\0");
+  const utf16 = s => { const b = new Uint8Array(s.length * 2 + 2); for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); b[i * 2] = c & 255; b[i * 2 + 1] = c >> 8; } return b; };
+  const E = (tag, type, data) => ({tag, type, data, count: [0, 1, 1, 2, 4, 8, 0, 1][type] ? data.length / [0, 1, 1, 2, 4, 8, 0, 1][type] : data.length});
+  const dms = v => { v = Math.abs(v); const d = Math.floor(v), mf = (v - d) * 60, m = Math.floor(mf); return [[d, 1], [m, 1], [Math.round((mf - m) * 60 * 1000), 1000]]; };
+  const d = new Date(p.t), local = stamp(p.t, ":", " ", ":"), off = -d.getTimezoneOffset();
+  const tz = `${off >= 0 ? "+" : "-"}${z2(Math.floor(Math.abs(off) / 60))}:${z2(Math.abs(off) % 60)}`;
+  const memo = memoLines(p).join("\n");
+  const ifd0 = [E(0x010E, 2, ascii(`Geo-Henro photo ${title}`)), E(0x0112, 3, u16(1)), E(0x0131, 2, ascii("Geo-Henro (JSEG Chugoku-Shikoku Branch)")),
+                E(0x0132, 2, ascii(local)), E(0x9C9B, 1, utf16(`ジオ遍路 ${title}`)), E(0x9C9C, 1, utf16(memo)),
+                E(0x8769, 4, u32(0)), E(0x8825, 4, u32(0))];
+  const uc = new Uint8Array(8 + memo.length * 2); uc.set(enc.encode("UNICODE\0")); uc.set(utf16(memo).subarray(0, memo.length * 2), 8);
+  const exif = [E(0x9003, 2, ascii(local)), E(0x9011, 2, ascii(tz)), E(0x9286, 7, uc)];
+  const u = new Date(p.t);
+  const gps = [E(0x0000, 1, new Uint8Array([2, 3, 0, 0])), E(0x0001, 2, ascii(p.lat >= 0 ? "N" : "S")), E(0x0002, 5, rat(dms(p.lat))),
+               E(0x0003, 2, ascii(p.lon >= 0 ? "E" : "W")), E(0x0004, 5, rat(dms(p.lon))),
+               E(0x0007, 5, rat([[u.getUTCHours(), 1], [u.getUTCMinutes(), 1], [u.getUTCSeconds(), 1]])),
+               E(0x001D, 2, ascii(`${u.getUTCFullYear()}:${z2(u.getUTCMonth() + 1)}:${z2(u.getUTCDate())}`))];
+  if (p.alt != null) gps.push(E(0x0005, 1, new Uint8Array([p.alt < 0 ? 1 : 0])), E(0x0006, 5, rat([[Math.round(Math.abs(p.alt) * 100), 100]])));
+  if (p.heading != null) gps.push(E(0x0010, 2, ascii("T")), E(0x0011, 5, rat([[Math.round(p.heading * 100), 100]])));
+  if (p.acc != null) gps.push(E(0x001F, 5, rat([[Math.round(p.acc * 10), 10]])));
+  [ifd0, exif, gps].forEach(f => f.sort((a, b) => a.tag - b.tag));
+  const size = f => 2 + f.length * 12 + 4 + f.reduce((s, e) => s + (e.data.length > 4 ? e.data.length + (e.data.length & 1) : 0), 0);
+  const o0 = 8, oE = o0 + size(ifd0), oG = oE + size(exif), total = oG + size(gps);
+  ifd0.find(e => e.tag === 0x8769).data = u32(oE); ifd0.find(e => e.tag === 0x8825).data = u32(oG);
+  const buf = new Uint8Array(total), dv = new DataView(buf.buffer);
+  buf.set([0x49, 0x49]); dv.setUint16(2, 42, true); dv.setUint32(4, 8, true);
+  const write = (f, at) => {
+    dv.setUint16(at, f.length, true);
+    let dataAt = at + 2 + f.length * 12 + 4;
+    f.forEach((e, i) => {
+      const q = at + 2 + i * 12;
+      dv.setUint16(q, e.tag, true); dv.setUint16(q + 2, e.type, true); dv.setUint32(q + 4, e.count, true);
+      if (e.data.length <= 4) buf.set(e.data, q + 8);
+      else { dv.setUint32(q + 8, dataAt, true); buf.set(e.data, dataAt); dataAt += e.data.length + (e.data.length & 1); }
+    });
+  };
+  write(ifd0, o0); write(exif, oE); write(gps, oG);
+  return buf;
+}
+async function jpegWithExif(p, title){
+  const jpg = new Uint8Array(await p.blob.arrayBuffer());
+  if (jpg[0] !== 0xFF || jpg[1] !== 0xD8) return jpg;   // JPEGでなければそのまま
+  const tiff = buildExif(p, title), len = 2 + 6 + tiff.length;
+  const out = new Uint8Array(jpg.length + 2 + len);
+  out.set([0xFF, 0xD8, 0xFF, 0xE1, len >> 8, len & 255]); out.set(enc.encode("Exif\0\0"), 6); out.set(tiff, 12); out.set(jpg.subarray(2), 12 + tiff.length);
+  return out;
+}
+// Google Earth の写真の印（向きの矢印・向きなしの丸）
+async function iconPng(arrow){
+  const c = document.createElement("canvas"); c.width = c.height = 64; const g = c.getContext("2d");
+  g.translate(32, 32); g.lineWidth = 4; g.strokeStyle = "#fff"; g.fillStyle = "#e65100";
+  if (arrow) { g.beginPath(); g.moveTo(0, -28); g.lineTo(16, 6); g.lineTo(5, 2); g.lineTo(5, 26); g.lineTo(-5, 26); g.lineTo(-5, 2); g.lineTo(-16, 6); g.closePath(); g.stroke(); g.fill(); }
+  else { g.beginPath(); g.arc(0, 0, 14, 0, Math.PI * 2); g.stroke(); g.fill(); }
+  return new Uint8Array(await (await new Promise(ok => c.toBlob(ok, "image/png"))).arrayBuffer());
+}
+const csvCell = v => { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+async function buildPackage(t){
+  const photos = t.recStart ? (await pdb.byRec(t.recStart)).sort((a, b) => a.t - b.t) : [];
+  if (!photos.length) return gpxFile(t);
+  const base = gpxFile(t).name.replace(/\.gpx$/, ""), when = t.start || Date.now();
+  const names = photos.map(photoFileName);
+  // GPX：写真の地点を wpt として足す（写真ファイルへのリンクつき）
+  const wpts = photos.map((p, i) => `<wpt lat="${p.lat.toFixed(7)}" lon="${p.lon.toFixed(7)}">${p.alt != null ? `<ele>${(+p.alt).toFixed(1)}</ele>` : ""}<time>${new Date(p.t).toISOString()}</time>` +
+    `<name>写真${z2(i + 1)}</name><cmt>${xmlEsc("撮影方向 " + headingText(p))}</cmt><desc>${xmlEsc(memoLines(p).join("\n"))}</desc>` +
+    `<link href="photos/${names[i]}"><text>写真${z2(i + 1)}</text><type>image/jpeg</type></link><sym>Camera</sym></wpt>`).join("\n");
+  const gpx = buildGpx(t).replace(/<\/metadata>\n/, `</metadata>\n${wpts}\n`);
+  // 一覧表（Excelで文字化けしないよう、先頭にBOM）
+  const head = ["番号", "写真ファイル", "撮影日時", "緯度", "経度", "標高m", "位置の誤差m", "撮影方向（真北から時計回り°）", "撮影方向（16方位）", "方向の決め方",
+                "地質（自動）", "地質時代（自動）", "地質の大区分（自動）", "地質（撮影者）", "地質構造", "コメント"];
+  const rows = photos.map((p, i) => [i + 1, "photos/" + names[i], stamp(p.t, "/", " ", ":"), p.lat.toFixed(6), p.lon.toFixed(6), p.alt == null ? "" : (+p.alt).toFixed(1),
+    Math.round(p.acc || 0), p.heading == null ? "" : p.heading.toFixed(1), p.heading == null ? "" : DIR16[Math.round(p.heading / 22.5) % 16],
+    p.heading == null ? "なし" : p.headingSrc === "manual" ? "手で直した" : "方位磁針", p.geo?.lithology_ja, p.geo?.formationAge_ja, p.geo?.group_ja, p.geoObs, p.structure, p.note]);
+  const csv = "﻿" + [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  // Google Earth（Pro）用：ZIPを開いたフォルダで map_GoogleEarth.kml を開くと、写真と矢印が出る
+  const kmlPts = photos.map((p, i) => `<Placemark><name>写真${z2(i + 1)}</name><description><![CDATA[<img src="photos/${names[i]}" width="360"><br>${memoLines(p).map(esc).join("<br>")}]]></description>` +
+    `<Style><IconStyle><scale>1.2</scale>${p.heading == null ? "" : `<heading>${p.heading.toFixed(1)}</heading>`}<Icon><href>files/${p.heading == null ? "dot" : "arrow"}.png</href></Icon></IconStyle></Style>` +
+    `<Point><coordinates>${p.lon.toFixed(7)},${p.lat.toFixed(7)}</coordinates></Point></Placemark>`).join("\n");
+  const kmlLines = t.segs.filter(s => s.length > 1).map(s => `<LineString><tessellate>1</tessellate><coordinates>${s.map(q => `${q[1]},${q[0]}`).join(" ")}</coordinates></LineString>`).join("");
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${xmlEsc(t.name)}</name>
+<Style id="trk"><LineStyle><color>ffe8731a</color><width>4</width></LineStyle></Style>
+<Folder><name>歩いた道</name><Placemark><name>${xmlEsc(t.name)}</name><styleUrl>#trk</styleUrl><MultiGeometry>${kmlLines}</MultiGeometry></Placemark></Folder>
+<Folder><name>写真（${photos.length}枚）</name>
+${kmlPts}
+</Folder></Document></kml>\n`;
+  const readme = "﻿" + [`ジオ遍路の記録：${t.name}`, `距離 ${t.km.toFixed(2)} km／遍路道に沿って ${t.onKm.toFixed(2)} km／写真 ${photos.length}枚`, "",
+    "■ 中身", "track.gpx …… 歩いた道と写真の地点（登山アプリ・地図ソフトで開けます）",
+    "photos\\ …… 写真。ファイルの中に位置・撮影方向（真北から時計回り）・日時・メモを書き込んでいます",
+    "photos.csv …… 写真の一覧表（Excelで開けます）。地質（自動）と撮影者のメモ（地質・地質構造・コメント）",
+    "map_GoogleEarth.kml …… Google Earth Pro で開くと、歩いた道と写真（向きの矢印つき）が出ます。このZIPを展開したフォルダのまま開いてください",
+    "", "■ 注意", "撮影方向は、スマホの方位磁針で測った向きを四国の偏角（西偏約7.7°）で真北に直したものです。数十度ずれることがあります。",
+    "自動の地質は、産総研 地質調査総合センター「20万分の1日本シームレス地質図V2」の凡例です。",
+    "背景図・遍路道のデータはこのZIPには入っていません。", "", "応用地質学会 中国四国支部「ジオ遍路」"].join("\r\n") + "\r\n";
+  const files = [
+    {name: `${base}/README.txt`, data: enc.encode(readme), date: when},
+    {name: `${base}/track.gpx`, data: enc.encode(gpx), date: when},
+    {name: `${base}/photos.csv`, data: enc.encode(csv), date: when},
+    {name: `${base}/map_GoogleEarth.kml`, data: enc.encode(kml), date: when},
+    {name: `${base}/files/arrow.png`, data: await iconPng(true), date: when},
+    {name: `${base}/files/dot.png`, data: await iconPng(false), date: when},
+  ];
+  for (let i = 0; i < photos.length; i++) files.push({name: `${base}/photos/${names[i]}`, data: await jpegWithExif(photos[i], `写真${z2(i + 1)}`), date: photos[i].t});
+  return new File([makeZip(files)], `${base}.zip`, {type: "application/zip"});
+}
 function saveFile(f){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(f); a.download = f.name;
@@ -1213,13 +1364,21 @@ $("#tracks").addEventListener("click", async e => {
   const id = b.closest("li").dataset.id, list = store.get(TRACKS_KEY, []), t = list.find(x => x.id === id);
   if (!t) return;
   if (b.dataset.act === "show") toggleTrack(t);
-  if (b.dataset.act === "save") { saveFile(gpxFile(t)); toast("ファイル（GPX）に保存しました。"); }
-  if (b.dataset.act === "send") {
-    const f = gpxFile(t);
-    if (navigator.canShare && navigator.canShare({files: [f]})) {
-      try { await navigator.share({files: [f], title: t.name, text: `ジオ遍路の記録：${t.name}（${t.km.toFixed(2)} km）`}); }
+  if (b.dataset.act === "save" || b.dataset.act === "send") {
+    // 写真のある記録は ZIP（GPX＋写真＋一覧表＋Google Earth用）、ない記録は GPX だけ
+    let f;
+    try {
+      if (t.photoCount) toast("写真をまとめています…", 8000);
+      f = await buildPackage(t);
+    } catch (err) { return toast("ファイルを作れませんでした（" + err.message + "）。", 6000); }
+    const zip = f.name.endsWith(".zip"), mb = f.size / 1048576;
+    const sizeNote = zip ? `（${mb.toFixed(1)} MB）` : "";
+    if (zip && mb > 20) toast(`ファイルが ${mb.toFixed(0)} MB あり、メールで送れないことがあります。そのときは写真を何回かに分けて記録してください。`, 7000);
+    if (b.dataset.act === "save") { saveFile(f); toast(`ファイル（${zip ? "ZIP：写真つき" : "GPX"}）に保存しました${sizeNote}。`, 4000); }
+    else if (navigator.canShare && navigator.canShare({files: [f]})) {
+      try { await navigator.share({files: [f], title: t.name, text: `ジオ遍路の記録：${t.name}（${t.km.toFixed(2)} km${t.photoCount ? `・写真${t.photoCount}枚` : ""}）`}); }
       catch (err) { if (err.name !== "AbortError") toast("送れませんでした。「ファイルに保存」してから送ってください。", 4000); }
-    } else { saveFile(f); toast("このブラウザでは直接送れないため、ファイルに保存しました。メールに添付して送ってください。", 5000); }
+    } else { saveFile(f); toast(`このブラウザでは直接送れないため、ファイルに保存しました${sizeNote}。メールに添付して送ってください。`, 5000); }
   }
   if (b.dataset.act === "del") {
     if (!confirm(`「${t.name}」を消します${t.photoCount ? `（写真${t.photoCount}枚も消えます）` : ""}。消すと元に戻せません。支部に送り終えていますか？`)) return;

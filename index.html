@@ -1343,7 +1343,8 @@ $("#photo-in").addEventListener("change", async e => {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     await drawRecPhotos();
     toast(`写真を残しました（撮影方向：${dirName(p.heading)}）。`, 3000);
-    openMemo(p);   // 撮った直後にメモを書けるようにする（「あとで書く」も可）
+    // 撮った直後に書き込みの画面を開き、閉じたらメモの画面へ（どちらも「書き込まない」「あとで書く」で飛ばせる。2026-11-28 本人の希望）
+    openDraw(p, false, true);
     // その場所の地質を調べて写真に添える（電波がなければあとで）
     try {
       const r = await fetch(LEGEND_API + p.lat.toFixed(6) + "," + p.lon.toFixed(6));
@@ -1487,12 +1488,16 @@ function dwLayout(){
   dwCv.width = Math.round(cw * dpr); dwCv.height = Math.round(ch * dpr);
   dwRender();
 }
-async function openDraw(p, fromViewer = false){
+// fromViewer：拡大表示から開いた（閉じたら拡大表示に戻る）／afterShot：撮った直後（閉じたらメモの画面へ）
+async function openDraw(p, fromViewer = false, afterShot = false){
   const url = URL.createObjectURL(p.blob), img = new Image();   // 書き込むのは、いつも元の写真の上
   img.src = url;
-  try { await img.decode(); } catch { URL.revokeObjectURL(url); return toast("写真を開けませんでした。", 4000); }
-  Object.assign(dw, {p, img, url, marks: JSON.parse(JSON.stringify(p.marks || [])), cur: null, pid: null, fromViewer});
+  try { await img.decode(); } catch { URL.revokeObjectURL(url); if (afterShot) openMemo(p); return toast("写真を開けませんでした。", 4000); }
+  Object.assign(dw, {p, img, url, marks: JSON.parse(JSON.stringify(p.marks || [])), cur: null, pid: null, fromViewer, afterShot});
   dw.start = JSON.stringify(dw.marks);
+  $("#dw-cancel").textContent = afterShot ? "書き込まない" : "やめる";
+  $("#dw-save").textContent = afterShot ? "残して次へ" : "残す";
+  $("#draw .dw-top span").textContent = afterShot ? "撮った写真に書き込む" : "写真に書き込む";
   $("#draw").hidden = false;
   requestAnimationFrame(dwLayout);
 }
@@ -1548,14 +1553,18 @@ $("#dw-clear").addEventListener("click", () => {
   if (!dw.marks.length || !confirm("書き込みを全部消します。よろしいですか？（「残す」を押すまでは写真に反映されません）")) return;
   dw.marks = []; dwRender();
 });
+// 撮った直後に開いたときは、閉じたらメモの画面へ進む（地質の自動記入が入った最新のものを開く）
+const memoAfterShot = async p => { const cur = (await pdb.get(p.id)) || p; openMemo(cur); };
 $("#dw-cancel").addEventListener("click", () => {
-  const p = dw.p, back = dw.fromViewer;
+  const p = dw.p, back = dw.fromViewer, shot = dw.afterShot;
   if (JSON.stringify(dw.marks) !== dw.start && !confirm("書き込みを残さずに閉じます。よろしいですか？")) return;
   closeDraw();
   if (back && p) openViewer(p);
+  if (shot && p) memoAfterShot(p);
 });
 $("#dw-save").addEventListener("click", async () => {
-  const p = dw.p, marks = dw.marks, back = dw.fromViewer; if (!p || !dw.img) return;
+  const p = dw.p, marks = dw.marks, back = dw.fromViewer, shot = dw.afterShot; if (!p || !dw.img) return;
+  if (shot && !marks.length && dw.start === "[]") { closeDraw(); return memoAfterShot(p); }   // 何も書かずに「次へ」
   const btn = $("#dw-save"); btn.disabled = true;
   try {
     let marked = null, thumb;
@@ -1574,8 +1583,10 @@ $("#dw-save").addEventListener("click", async () => {
     closeDraw();
     toast(marks.length ? `書き込みを残しました（${marks.length}か所）。元の写真もそのまま残っています。` : "書き込みをなくし、元の写真に戻しました。", 3500);
     if (back) openViewer(cur);
+    if (shot) openMemo(cur);
   } catch (err) {
     toast("書き込みを残せませんでした（" + err.message + "）。", 5000);
+    if (shot && $("#draw").hidden) memoAfterShot(p);
   } finally { btn.disabled = false; }
 });
 

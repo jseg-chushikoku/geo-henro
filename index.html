@@ -198,6 +198,18 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
   background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
 #memo .memo-btns{display:flex;gap:8px;margin-top:14px}
 #memo .memo-btns .btn{flex:1;margin-top:0;padding:11px 0;font-size:14.5px;font-weight:700}
+/* ポケットモード：真っ黒な画面で記録を続ける（画面は点いたまま。さわっても反応しない） */
+#pocket{position:fixed;inset:0;z-index:1300;background:#000;color:#4d4d4d;display:flex;align-items:center;justify-content:center;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#pocket .pk-box{text-align:center;font-variant-numeric:tabular-nums;transition:transform 1s}
+#pocket .pk-state{font-size:15px;color:#7a2a20}
+#pocket .pk-km{font-size:44px;font-weight:700;color:#5a5a5a;margin-top:6px}
+#pocket .pk-time{font-size:18px}
+#pocket .pk-clock{font-size:15px;margin-top:10px}
+#pocket .pk-hint{font-size:13px;margin-top:28px}
+#pocket .pk-bar{width:180px;height:4px;background:#1a1a1a;border-radius:2px;margin:10px auto 0;overflow:hidden}
+#pocket .pk-bar span{display:block;height:100%;width:0;background:#5a5a5a}
+#pocket.holding .pk-bar span{width:100%;transition:width 2s linear}
 #viewer{position:fixed;inset:0;z-index:1200;background:#000;display:flex;flex-direction:column}
 #viewer img{flex:1;min-height:0;width:100%;object-fit:contain}
 #viewer .vbar{color:#fff;font-size:13px;padding:10px 14px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -301,11 +313,12 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
           <button class="btn big" id="rec-stop" hidden>終えて保存</button>
         </div>
         <button class="btn big" id="rec-photo" style="width:100%;margin-top:8px;background:#e65100;border-color:#e65100;color:#fff" hidden>写真を撮る（位置と撮影方向を残す）</button>
+        <button class="btn big" id="rec-pocket" style="width:100%;margin-top:8px;background:#222;border-color:#222;color:#ddd" hidden>ポケットモード（画面を真っ暗にして記録を続ける）</button>
         <div class="photo-strip" id="rec-photos"></div>
         <label class="switch">記録中は画面を消さない<input type="checkbox" id="rec-wake" checked></label>
       </div>
       <p class="note" id="photo-help" hidden>撮りたいものにスマホを向けてから「写真を撮る」を押してください。撮影方向は、ボタンを押した瞬間のスマホの向きです（真北から時計回り。方位磁針はずれることがあるので、地図の写真の印から直せます）。写真はこのスマホの中だけに残ります。</p>
-      <p class="note">画面を消すと、スマホによっては記録が止まります（特にiPhone）。歩くときは画面を点けたままにしてください。長い区間を歩くときは、ふだん使っている登山アプリで記録し、そのファイル（GPX）を支部に送ってもかまいません。車や電車で移動するときは「一時停止」を押してください。</p>
+      <p class="note">画面を消す（ロックする）と、記録は止まります（Webのアプリはスマホの決まりで、画面を消すと位置を受け取れません）。ポケットに入れて歩くときは「ポケットモード」を使ってください。画面は点いたまま真っ暗になり、さわっても反応しません。<br>長い区間は、ふだん使っている登山アプリで道を記録し、写真とメモはジオ遍路で撮ってください。あとで保存した記録の「道をほかのアプリのGPXに差し替え」で、写真と1つの記録に合わさります。車や電車で移動するときは「一時停止」を押してください。</p>
       <h3>保存した記録</h3>
       <ul class="tracks" id="tracks"></ul>
       <label class="btn" style="margin-top:10px">ほかのアプリの記録（GPX）を読み込む<input type="file" id="gpx-in" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label>
@@ -351,6 +364,17 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 
 <div id="toast" role="status"></div>
 <input type="file" id="photo-in" accept="image/*" capture="environment" hidden>
+<input type="file" id="gpx-replace" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden>
+<div id="pocket" hidden aria-label="ポケットモード">
+  <div class="pk-box">
+    <div class="pk-state" id="pk-state">● 記録中</div>
+    <div class="pk-km" id="pk-km">0.00 km</div>
+    <div class="pk-time" id="pk-time">0:00</div>
+    <div class="pk-clock" id="pk-clock"></div>
+    <div class="pk-hint">戻すときは、画面を2秒長押し</div>
+    <div class="pk-bar"><span></span></div>
+  </div>
+</div>
 <div id="viewer" hidden>
   <img alt="">
   <div class="vbar"><span id="viewer-cap"></span><button type="button" id="viewer-save">写真を保存</button><button type="button" id="viewer-close">閉じる</button></div>
@@ -1012,6 +1036,7 @@ async function drawRecPhotos(){
 function updatePhotoUI(){
   const on = !!rec.data;
   $("#btn-photo").hidden = !on; $("#rec-photo").hidden = !on; $("#photo-help").hidden = !on;
+  $("#rec-pocket").hidden = !(rec.data && rec.data.running);
 }
 
 // 撮影：ボタンを押した瞬間の位置と向きを控えてから、スマホのカメラを開く
@@ -1177,10 +1202,12 @@ function renderTracks(){
   const list = store.get(TRACKS_KEY, []);
   $("#tracks").innerHTML = list.length ? list.map(t => `<li data-id="${t.id}">
       <div class="tn">${esc(t.name)}</div>
-      <div class="ts">${t.km.toFixed(2)} km${t.sec ? "・" + fmtDur(t.sec) : ""}・遍路道に沿って ${t.onKm.toFixed(2)} km${t.photoCount ? `・写真${t.photoCount}枚` : ""}${t.src === "import" ? "・読み込み" : ""}</div>
+      <div class="ts">${t.km.toFixed(2)} km${t.sec ? "・" + fmtDur(t.sec) : ""}・遍路道に沿って ${t.onKm.toFixed(2)} km${t.photoCount ? `・写真${t.photoCount}枚` : ""}${t.src === "import" ? "・読み込み" : ""}${t.replacedFrom ? `<br>道：${esc(t.replacedFrom)} に差し替え済み` : ""}</div>
       <div class="ta"><button class="btn" data-act="show">${shownTracks[t.id] ? "地図から外す" : "地図で見る"}</button>
         <button class="btn primary" data-act="send">送る</button>
         <button class="btn" data-act="save">ファイルに保存</button>
+        ${t.src === "rec" ? `<button class="btn" data-act="replace">道をほかのアプリのGPXに差し替え</button>` : ""}
+        ${t.orig ? `<button class="btn" data-act="restore">元の道に戻す</button>` : ""}
         <button class="btn" data-act="del">消す</button></div></li>`).join("")
     : '<li class="empty">まだ記録はありません。</li>';
 }
@@ -1364,6 +1391,8 @@ $("#tracks").addEventListener("click", async e => {
   const id = b.closest("li").dataset.id, list = store.get(TRACKS_KEY, []), t = list.find(x => x.id === id);
   if (!t) return;
   if (b.dataset.act === "show") toggleTrack(t);
+  if (b.dataset.act === "replace") { replaceTarget = id; $("#gpx-replace").click(); }
+  if (b.dataset.act === "restore") restoreTrack(id);
   if (b.dataset.act === "save" || b.dataset.act === "send") {
     // 写真のある記録は ZIP（GPX＋写真＋一覧表＋Google Earth用）、ない記録は GPX だけ
     let f;
@@ -1415,6 +1444,84 @@ $("#gpx-in").addEventListener("change", async e => {
   }
 });
 step("保存した記録", renderTracks);
+
+// ---------- ポケットモード：画面は点けたまま真っ黒にし、さわっても反応しないようにして記録を続ける ----------
+// Webのアプリは、画面を消す（ロックする）と位置を受け取れない（スマホの決まり）。そのかわりの使い方。
+// 有機ELの画面は黒い所がほとんど電気を使わないので、地図を出し続けるより電池の減りが少ない。
+const pocket = {on: false, timer: null, hold: null};
+function pocketUI(){
+  if (!pocket.on) return;
+  const d = rec.data, n = new Date();
+  $("#pk-state").textContent = d && d.running ? "● 記録中" : "一時停止中";
+  $("#pk-km").textContent = (d ? d.km : 0).toFixed(2) + " km";
+  $("#pk-time").textContent = "歩いた時間 " + fmtTime(recElapsed());
+  $("#pk-clock").textContent = `${n.getHours()}:${z2(n.getMinutes())}`;
+  // 同じ場所に文字を出し続けると画面に焼き付くので、1分ごとに少しずらす
+  const k = Math.floor(Date.now() / 60000) % 5;
+  $("#pocket .pk-box").style.transform = `translate(${[0, -24, 24, -12, 12][k]}px, ${[0, -40, 40, 20, -20][k]}px)`;
+}
+async function pocketOn(){
+  if (!rec.data || !rec.data.running) return toast("ポケットモードは、記録しているあいだに使えます。", 3500);
+  pocket.on = true; $("#pocket").hidden = false;
+  $("#rec-wake").checked = true;
+  await keepAwake(true);
+  if (!rec.wake) toast("このブラウザは画面を点けたままにできないようです。スマホの設定で「自動ロック」を長め（または「なし」）にしてください。", 7000);
+  pocketUI(); clearInterval(pocket.timer); pocket.timer = setInterval(pocketUI, 5000);
+}
+function pocketOff(){
+  pocket.on = false; $("#pocket").hidden = true; $("#pocket").classList.remove("holding");
+  clearInterval(pocket.timer); clearTimeout(pocket.hold);
+  toast("ポケットモードを終えました。記録は続いています。");
+}
+$("#rec-pocket").addEventListener("click", pocketOn);
+(() => {
+  const el = $("#pocket");
+  const cancel = () => { clearTimeout(pocket.hold); el.classList.remove("holding"); };
+  el.addEventListener("pointerdown", e => { e.preventDefault(); cancel(); void el.offsetWidth; el.classList.add("holding"); pocket.hold = setTimeout(pocketOff, 2000); });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(t => el.addEventListener(t, cancel));
+  ["contextmenu", "touchstart", "touchmove", "click", "dblclick"].forEach(t => el.addEventListener(t, e => e.preventDefault(), {passive: false}));
+})();
+
+// ---------- 道をほかのアプリのGPXに差し替える（写真とメモはそのまま） ----------
+// 長い区間は登山アプリ（画面を消しても記録できる）で道を記録し、写真とメモはジオ遍路で撮る。
+// あとでその登山アプリのGPXを読み込むと、ジオ遍路の写真と1つの記録に合わさる。元の道は控えに残し、戻せる。
+let replaceTarget = null;
+$("#gpx-replace").addEventListener("change", async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = "";
+  const id = replaceTarget; replaceTarget = null;
+  if (!f || !id) return;
+  let imp;
+  try { imp = parseGpx(await f.text(), f.name); } catch (err) { return toast(`${f.name}：${err.message}`, 5000); }
+  const list = store.get(TRACKS_KEY, []), t = list.find(x => x.id === id);
+  if (!t) return;
+  const photos = t.recStart ? await pdb.byRec(t.recStart).catch(() => []) : [];
+  const times = imp.segs.flat().map(p => p[3]).filter(Boolean);
+  let note;
+  if (times.length) {
+    const a = Math.min(...times), b = Math.max(...times);
+    const inside = photos.filter(p => p.t >= a - 600000 && p.t <= b + 600000).length;
+    note = `読み込む道：${fmtClock(a)}〜${fmtClock(b)}（${imp.km.toFixed(2)} km）`;
+    if (photos.length) note += `\nこの記録の写真${photos.length}枚のうち、その時間内（前後10分を含む）に撮ったもの：${inside}枚`;
+    if (photos.length && inside === 0) note += "\n※写真と時間が合いません。別の日の記録ではないか確かめてください。";
+  } else note = `読み込む道には時刻が入っていません（${imp.km.toFixed(2)} km）。写真と同じ日の記録か確かめてください。`;
+  if (!confirm(`「${t.name}」の道を、${f.name} の道に差し替えます。写真とメモはそのまま残ります。\n\n${note}\n\n差し替えたあとも「元の道に戻す」で戻せます。よろしいですか？`)) return;
+  if (!t.orig) t.orig = {segs: t.segs, km: t.km, onKm: t.onKm, sec: t.sec, n: t.n};
+  Object.assign(t, {segs: imp.segs, km: imp.km, onKm: imp.onKm, n: imp.n, replacedFrom: f.name});
+  if (imp.sec) t.sec = imp.sec;
+  if (!store.set(TRACKS_KEY, list)) return;
+  if (shownTracks[id]) { toggleTrack(t); toggleTrack(t); }
+  renderTracks();
+  toast(`道を差し替えました（${imp.km.toFixed(2)} km）。写真${photos.length}枚はそのままです。`, 4500);
+});
+function restoreTrack(id){
+  const list = store.get(TRACKS_KEY, []), t = list.find(x => x.id === id);
+  if (!t || !t.orig) return;
+  if (!confirm(`「${t.name}」の道を、ジオ遍路で記録した元の道に戻します。よろしいですか？`)) return;
+  Object.assign(t, t.orig); delete t.orig; delete t.replacedFrom;
+  if (!store.set(TRACKS_KEY, list)) return;
+  if (shownTracks[id]) { toggleTrack(t); toggleTrack(t); }
+  renderTracks(); toast("元の道に戻しました。");
+}
 
 // アドレスの後ろの指定で開き方を変える（例：?tab=temple&sheet=half、?at=33.5,133.2）
 step("開き方の指定", () => {

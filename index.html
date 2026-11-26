@@ -137,6 +137,20 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 .tnum{width:22px;height:22px;border-radius:50%;background:#1f3b5a;color:#fff;display:grid;place-items:center;
   font:700 10px/1 var(--f-body);border:2px solid #fff;box-shadow:0 0 0 1px #0004}
 .zoom-low .tnum{width:10px;height:10px;font-size:0;border-width:1.5px}
+/* 巡礼済みの札所：金色 */
+.tnum.done,.tno.done{background:#d4a017;color:#231a00}
+.vbtn{flex:none;border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.vbtn[aria-pressed=true]{background:#d4a017;border-color:#d4a017;color:#231a00;font-weight:700}
+.tdone{font-size:11px;color:#8a6500;margin-left:6px;font-weight:400}
+.vprog{background:var(--paper);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.vprog .vt{display:flex;justify-content:space-between;align-items:baseline;font-weight:700}
+.vprog .vt b{font-size:20px;font-variant-numeric:tabular-nums}
+.vprog .vbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:6px 0}
+.vprog .vbar span{display:block;height:100%;background:#d4a017}
+.vprog .vp{font-size:12px;color:var(--muted)}
+.tpop .vrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.tpop .vrow input{font:inherit;font-size:12px;padding:2px 4px}
+.vdone{color:#8a6500;font-weight:700;font-size:12px}
 .leaflet-popup-content{font-family:var(--f-body);font-size:13px;margin:10px 14px}
 .leaflet-control-attribution{font-size:10px}
 
@@ -272,6 +286,8 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
     </div>
 
     <div class="pane" id="pane-temple">
+      <div class="vprog" id="vprog"></div>
+      <label class="switch" style="padding:4px 0 8px">まだ回っていない札所だけ出す<input type="checkbox" id="tonly-left"></label>
       <div class="chips" id="tchips">
         <button aria-pressed="true" data-r="all">88か所</button>
         <button aria-pressed="false" data-r="1-23">徳島 1〜23</button>
@@ -464,11 +480,27 @@ fitShikoku();
 
 // 札所
 const sw = g => g && g.r != null ? `<span class="sw2" style="background:rgb(${g.r},${g.g},${g.b})"></span>` : "";
+// 巡礼済みの札所（このスマホの中だけに残す）：{札所番号: {date: "YYYY-MM-DD", t: 付けた時刻}}
+const VISIT_KEY = "henro-visited";
+const visits = (() => { try { return JSON.parse(localStorage.getItem(VISIT_KEY) || "{}") || {}; } catch { return {}; } })();
+function saveVisits(){
+  try { localStorage.setItem(VISIT_KEY, JSON.stringify(visits)); return true; }
+  catch { toast("巡礼済みの印を保存できませんでした。", 4000); return false; }
+}
+const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+const mdStr = s => s ? `${+s.slice(5, 7)}/${+s.slice(8, 10)}` : "";
+const templeIcon = no => L.divIcon({className: "tmk", html: `<div class="tnum${visits[no] ? " done" : ""}">${no}</div>`, iconSize: [26, 26]});
+function templePopup(t){
+  const v = visits[t.no];
+  return `<div class="tpop" data-no="${t.no}"><b>${t.no}番 ${esc(t.name)}</b><br><span class="note">${esc(t.addr)}</span><br>${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}
+    <div class="vrow">${v ? `<span class="vdone">巡礼済み</span><input type="date" class="vdate" data-no="${t.no}" value="${v.date}" aria-label="巡礼した日">` : ""}
+    <button class="vbtn" data-visit="${t.no}" aria-pressed="${!!v}">${v ? "取り消す" : "巡礼済みにする"}</button></div></div>`;
+}
 const templeLayer = L.layerGroup(), templeMarkers = {};
 step("札所", () => {
   D.temples.forEach(t => {
-    const m = L.marker([t.lat, t.lon], {icon: L.divIcon({className: "tmk", html: `<div class="tnum">${t.no}</div>`, iconSize: [26, 26]}), title: `${t.no}番 ${t.name}`})
-      .bindPopup(`<b>${t.no}番 ${esc(t.name)}</b><br><span class="note">${esc(t.addr)}</span><br>${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}`);
+    const m = L.marker([t.lat, t.lon], {icon: templeIcon(t.no), title: `${t.no}番 ${t.name}`})
+      .bindPopup(() => templePopup(t));
     m.on("click", () => showGeo(t.geo, `${t.no}番 ${t.name}`));
     m.addTo(templeLayer); templeMarkers[t.no] = m;
   });
@@ -544,17 +576,60 @@ map.on("click", e => {
 });
 
 // ---------- 札所の一覧 ----------
-function renderTemples(range){
+const DOJO = [["徳島", 1, 23], ["高知", 24, 39], ["愛媛", 40, 65], ["香川", 66, 88]];
+let templeRange = "all";
+function renderTemples(range = templeRange){
+  templeRange = range;
   const [a, b] = range === "all" ? [1, 88] : range.split("-").map(Number);
-  $("#tlist").innerHTML = D.temples.filter(t => t.no >= a && t.no <= b).map(t =>
-    `<li data-no="${t.no}"><div class="tno">${t.no}</div><div class="tmain">
-      <div class="tname">${esc(t.name)}<small>${esc(t.yomi)}</small></div>
-      <div class="tgeo">${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}</div></div></li>`).join("");
+  const onlyLeft = $("#tonly-left").checked;
+  const list = D.temples.filter(t => t.no >= a && t.no <= b && !(onlyLeft && visits[t.no]));
+  $("#tlist").innerHTML = list.length ? list.map(t => {
+    const v = visits[t.no];
+    return `<li data-no="${t.no}"><div class="tno${v ? " done" : ""}">${t.no}</div><div class="tmain">
+      <div class="tname">${esc(t.name)}<small>${esc(t.yomi)}</small>${v ? `<span class="tdone">巡礼済 ${mdStr(v.date)}</span>` : ""}</div>
+      <div class="tgeo">${sw(t.geo)}${esc(t.geo?.lithology_ja || "凡例なし")}</div></div>
+      <button class="vbtn" data-visit="${t.no}" aria-pressed="${!!v}">${v ? "済" : "巡礼済みに"}</button></li>`;
+  }).join("") : '<li class="note" style="cursor:default">この範囲の札所はすべて巡礼済みです。</li>';
+  // 巡礼の進み具合
+  const n = Object.keys(visits).length;
+  $("#vprog").innerHTML = `<div class="vt"><span>巡礼済み</span><span><b>${n}</b> / 88</span></div>
+    <div class="vbar"><span style="width:${(n / 88 * 100).toFixed(1)}%"></span></div>
+    <div class="vp">${DOJO.map(([k, s, e]) => `${k} ${D.temples.filter(t => t.no >= s && t.no <= e && visits[t.no]).length}/${e - s + 1}`).join("・")}${n === 88 ? "　<b>結願（88か所すべて巡礼済み）</b>" : ""}</div>`;
 }
+// 巡礼済みにする／取り消す。印を付けた札所の地図の丸・一覧・吹き出し・進み具合をそろえて直す
+function setVisited(no, on){
+  no = +no; const t = D.temples.find(x => x.no === no); if (!t) return;
+  if (on) visits[no] = {date: todayStr(), t: Date.now()};
+  else {
+    if (!confirm(`${no}番 ${t.name} の巡礼済みを取り消します（${mdStr(visits[no]?.date)}に付けた印）。よろしいですか？`)) return;
+    delete visits[no];
+  }
+  if (!saveVisits()) return;
+  refreshTemple(no);
+  toast(on ? `${no}番 ${t.name} を巡礼済みにしました（${Object.keys(visits).length}/88）。` : `${no}番 ${t.name} の巡礼済みを取り消しました。`, 3000);
+}
+function refreshTemple(no){
+  const m = templeMarkers[no];
+  if (m) { m.setIcon(templeIcon(no)); if (m.isPopupOpen()) m.getPopup().update(); }
+  renderTemples();
+  document.querySelectorAll(`.near [data-visit="${no}"]`).forEach(b => {
+    b.closest(".vnear").innerHTML = visits[no] ? `<span class="vdone">${no}番は巡礼済みです（${mdStr(visits[no].date)}）</span>` : "";
+  });
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-visit]"); if (!b) return;
+  e.stopPropagation();
+  setVisited(b.dataset.visit, !visits[+b.dataset.visit]);
+});
+document.addEventListener("change", e => {   // 吹き出しで巡礼した日を直す
+  const d = e.target.closest(".vdate"); if (!d || !visits[+d.dataset.no] || !d.value) return;
+  visits[+d.dataset.no].date = d.value; if (saveVisits()) { renderTemples(); toast(`巡礼した日を ${mdStr(d.value)} にしました。`); }
+});
 step("札所の一覧", () => renderTemples("all"));
+$("#tonly-left").addEventListener("change", () => renderTemples());
 $("#tchips").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
   $("#tchips").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderTemples(b.dataset.r); });
-$("#tlist").addEventListener("click", e => { const li = e.target.closest("li"); if (!li) return;
+$("#tlist").addEventListener("click", e => { if (e.target.closest("[data-visit]")) return; const li = e.target.closest("li[data-no]"); if (!li) return;
   const m = templeMarkers[li.dataset.no]; if (!m) return;
   if (!wide()) setSheet("peek");
   map.flyTo(m.getLatLng(), 15, {duration: .8});
@@ -620,6 +695,9 @@ function nearHtml(p){
   return `<div class="near">
     <div><span>遍路道まで</span><b>${fmtDist(distToRoute(p))}</b></div>
     <div><span>いちばん近い札所：${nearest.no}番 ${esc(nearest.name)}</span><b>${fmtDist(nd)}</b></div>
+    ${nd <= 300 ? `<div class="vnear" style="display:block">${visits[nearest.no]
+      ? `<span class="vdone">${nearest.no}番は巡礼済みです（${mdStr(visits[nearest.no].date)}）</span>`
+      : `<button class="vbtn" data-visit="${nearest.no}" aria-pressed="false">${nearest.no}番 ${esc(nearest.name)} を巡礼済みにする</button>`}</div>` : ""}
     <div class="note" style="display:block">距離はまっすぐ測った長さです。</div></div>`;
 }
 

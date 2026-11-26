@@ -4,7 +4,7 @@
 //   「電波なし用に保存」で残したもの（henro-tiles-saved）は別の置き場所で、上限で消えない。いちばん先に使う
 // - 地質の問い合わせ：まずネットに聞き、だめなら前に聞いた答えを使う
 // アプリを直したら VERSION を上げる。
-const VERSION = "2026-11-28-8";
+const VERSION = "2026-11-28-9";
 const SHELL = "henro-shell-" + VERSION;
 const TILES = "henro-tiles";
 const SAVED = "henro-tiles-saved";   // index.html の SAVED_CACHE と同じ名前

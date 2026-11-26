@@ -1460,6 +1460,8 @@ document.addEventListener("click", async e => {
       // 欄が増えたぶん、吹き出しが画面の上にはみ出したら地図をずらす（中身は描き直さない）
       const top = box.closest(".leaflet-popup").getBoundingClientRect().top;
       if (top < 72) map.panBy([0, top - 72]);
+      // 吹き出しの中身は高さに上限があり中で動くので、足した欄が下に隠れないよう、そこまで送る（2026-11-28 手順書づくりで判明）
+      box.querySelector(".hed").scrollIntoView({block: "nearest"});
       const rng = box.querySelector(".hed input"), show = h => { box.querySelector(".hv").textContent = dirName(h); m.setIcon(photoIcon(h)); };
       rng.addEventListener("input", () => show(+rng.value));
       show(start);

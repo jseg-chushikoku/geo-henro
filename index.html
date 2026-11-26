@@ -563,7 +563,32 @@ map.on("zoomend", zoomClass); zoomClass();
 const sheet = $("#sheet");
 const STATES = ["peek", "half", "full"];
 let sheetState = "peek";
-function setSheet(s){ sheetState = s; sheet.classList.toggle("half", s === "half"); sheet.classList.toggle("full", s === "full"); }
+let onSheetChange = null;   // 操作板の広さが変わったときに地図を合わせ直す（現在地のところで決める）
+function setSheet(s){
+  const before = sheetState;
+  sheetState = s; sheet.classList.toggle("half", s === "half"); sheet.classList.toggle("full", s === "full");
+  if (before !== s && onSheetChange) onSheetChange(s);
+}
+// 操作板が「半分」のとき、地図で見えているのは上の名札の下から、操作板（と出典の帯）の上まで。
+// 見せたい点（現在地・タップした所）をその見えている部分の真ん中に置くには、地図の中心を何px下へずらすか。
+// 「下げた」ときは今までどおり画面の真ん中（0）。「全部」とパソコンの横並びの画面でも0（2026-11-28 本人の希望）
+function focusShift(state = sheetState){
+  if (wide() || state !== "half") return 0;
+  const H = innerHeight, top = 56, credit = $("#mapcredit").offsetHeight || 0;
+  const bottom = H - H * .46 - credit;
+  return Math.max(0, H / 2 - (top + bottom) / 2);
+}
+// 点 p が「見えている部分の真ん中」に来るときの地図の中心
+function focusCenter(p, zoom = map.getZoom(), state = sheetState){
+  return map.unproject(map.project(p, zoom).add([0, focusShift(state)]), zoom);
+}
+// 点 p が操作板などに隠れているか（見えている部分の内側に少し余白をとって判定）
+function hiddenOnMap(p, state = sheetState){
+  if (wide()) return false;
+  const q = map.latLngToContainerPoint(p), H = innerHeight;
+  const bottom = state === "peek" ? H - 150 - 46 : state === "half" ? H - H * .46 - ($("#mapcredit").offsetHeight || 0) : 0;
+  return q.y < 56 + 10 || q.y > bottom - 16 || q.x < 10 || q.x > innerWidth - 60;
+}
 function openTab(name, state){
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.pane === name));
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + name));
@@ -619,10 +644,14 @@ async function lookupGeo(latlng, title, extra = ""){
   }
 }
 let tapMarker = null;
+let focusOn = null;   // いま見せたい点："me"＝現在地／"tap"＝タップした所
 map.on("click", e => {
   if (tapMarker) map.removeLayer(tapMarker);
   tapMarker = L.circleMarker(e.latlng, {radius: 7, color: "#000", weight: 2, fillColor: "#fff", fillOpacity: 1}).addTo(map);
+  focusOn = "tap";
   lookupGeo(e.latlng, "タップした場所");
+  // 操作板が半分のときに、タップした所が操作板に隠れたら、見えている部分の真ん中へ動かす
+  if (sheetState === "half" && hiddenOnMap(e.latlng)) map.panTo(focusCenter(e.latlng), {animate: true});
 });
 
 // ---------- 札所の一覧 ----------
@@ -771,16 +800,18 @@ function onPos(e){
     geo.acc = L.circle(p, {radius: e.coords.accuracy, color: "#1a73e8", weight: 1, fillOpacity: .08, interactive: false}).addTo(map);
     geo.marker = L.marker(p, {icon: L.divIcon({className: "", html: '<div class="me"></div>', iconSize: [18, 18]}), interactive: false, zIndexOffset: 1000}).addTo(map);
   } else { geo.marker.setLatLng(p); geo.acc.setLatLng(p).setRadius(e.coords.accuracy); }
-  if (geo.follow) map.panTo(p, {animate: true});
+  if (geo.follow && !geo.firstFix) map.panTo(focusCenter(p), {animate: true});
   if (geo.firstFix && geo.quiet) {
     // 記録を始めたときの現在地：地図を寄せるだけで、開いているタブ（記録）は替えない
-    geo.firstFix = false; geo.quiet = false; geo.follow = true;
-    map.setView(p, Math.max(map.getZoom(), 15));
+    geo.firstFix = false; geo.quiet = false; geo.follow = true; focusOn = "me";
+    const z = Math.max(map.getZoom(), 15);
+    map.setView(focusCenter(p, z), z);
   } else if (geo.firstFix) {
-    geo.firstFix = false; geo.follow = true;
-    map.setView(p, Math.max(map.getZoom(), 15));
-    if (!routeBounds.pad(.3).contains(p)) toast("四国の遍路道から離れた場所にいるようです。", 3500);
+    geo.firstFix = false; geo.follow = true; focusOn = "me";
     if (!wide()) setSheet("half");
+    const z = Math.max(map.getZoom(), 15);
+    map.setView(focusCenter(p, z), z);
+    if (!routeBounds.pad(.3).contains(p)) toast("四国の遍路道から離れた場所にいるようです。", 3500);
     lookupGeo(p, `いまいる場所（誤差 約${Math.round(e.coords.accuracy)} m）`, nearHtml(p));
   }
 }
@@ -798,14 +829,23 @@ locBtn.addEventListener("click", () => {
   if (geo.watch === null) { startWatch(); toast("現在地を探しています…"); return; }
   if (geo.pos) {
     // 2回目以降：現在地に戻って、足もとの地質を調べ直す
-    geo.follow = true;
-    map.setView(geo.pos, Math.max(map.getZoom(), 15));
+    geo.follow = true; focusOn = "me";
     if (!wide()) setSheet("half");
+    const z = Math.max(map.getZoom(), 15);
+    map.setView(focusCenter(geo.pos, z), z);
     lookupGeo(geo.pos, "いまいる場所", nearHtml(geo.pos));
   }
 });
 // 指で地図を動かしたら、現在地を追いかけるのをやめる
 map.on("dragstart", () => { geo.follow = false; });
+// 操作板の広さが変わったら、見せたい点を見えている部分に合わせ直す
+//  ・現在地を追いかけているとき：半分なら上の見えている部分の真ん中、下げたら画面の真ん中
+//  ・タップした所：操作板に隠れたときだけ、見えている部分の真ん中へ
+onSheetChange = state => {
+  if (wide() || state === "full") return;
+  if (focusOn === "me" && geo.follow && geo.pos) map.panTo(focusCenter(geo.pos, map.getZoom(), state), {animate: true});
+  else if (focusOn === "tap" && tapMarker && hiddenOnMap(tapMarker.getLatLng(), state)) map.panTo(focusCenter(tapMarker.getLatLng(), map.getZoom(), state), {animate: true});
+};
 // 画面を閉じている間は電池の節約のため止め、戻ったら再開する
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && geo.watch !== null) { stopWatch(); geo.resume = true; }

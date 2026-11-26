@@ -183,6 +183,21 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 .ppop .pa button{font:inherit;font-size:12px;border:1px solid #ccc;background:#fff;border-radius:6px;padding:3px 8px;cursor:pointer}
 .ppop .hed{margin-top:6px;padding:6px;background:#fff7ee;border-radius:6px}
 .ppop .hed input{width:100%}
+.leaflet-popup-content:has(.ppop){max-height:46dvh;overflow-y:auto;overscroll-behavior:contain}
+.ppop .memo{margin-top:5px;padding-top:5px;border-top:1px dashed #ddd;font-size:12.5px;line-height:1.55}
+.ppop .memo b{color:#7a3b00}
+/* 写真のメモ（撮影者が書く欄） */
+#memo{position:fixed;inset:0;z-index:1150;background:rgba(20,18,15,.45);display:flex;align-items:flex-end;justify-content:center}
+#memo .memo-box{width:100%;max-width:520px;max-height:92dvh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;
+  padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -4px 24px rgba(0,0,0,.25)}
+#memo .memo-head{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+#memo .memo-head img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none}
+#memo label{display:block;font-size:13px;font-weight:700;margin-top:10px}
+#memo label span{font-weight:400;color:var(--muted);font-size:11.5px;margin-left:6px}
+#memo input,#memo textarea{display:block;width:100%;margin-top:4px;font:inherit;font-size:16px;font-weight:400;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
+#memo .memo-btns{display:flex;gap:8px;margin-top:14px}
+#memo .memo-btns .btn{flex:1;margin-top:0;padding:11px 0;font-size:14.5px;font-weight:700}
 #viewer{position:fixed;inset:0;z-index:1200;background:#000;display:flex;flex-direction:column}
 #viewer img{flex:1;min-height:0;width:100%;object-fit:contain}
 #viewer .vbar{color:#fff;font-size:13px;padding:10px 14px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -339,6 +354,18 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 <div id="viewer" hidden>
   <img alt="">
   <div class="vbar"><span id="viewer-cap"></span><button type="button" id="viewer-save">写真を保存</button><button type="button" id="viewer-close">閉じる</button></div>
+</div>
+<div id="memo" hidden>
+  <div class="memo-box" role="dialog" aria-label="写真のメモ">
+    <div class="memo-head"><img id="memo-img" alt=""><div><b>写真のメモ</b><div class="note" id="memo-auto"></div></div></div>
+    <label for="memo-geo">地質<span>撮影者の見立て（アプリの自動の地質とは別）</span></label>
+    <input id="memo-geo" type="text" placeholder="例：砂岩泥岩互層、風化した花崗岩、崖錐堆積物">
+    <label for="memo-str">地質構造<span>自由記入</span></label>
+    <textarea id="memo-str" rows="2" placeholder="例：層理面 N40°E/30°NW、節理が密、小断層あり、褶曲"></textarea>
+    <label for="memo-note">コメント<span>自由記入</span></label>
+    <textarea id="memo-note" rows="3" placeholder="気づいたこと、露頭の様子、遍路道との関わりなど"></textarea>
+    <div class="memo-btns"><button type="button" class="btn" id="memo-later">あとで書く</button><button type="button" class="btn primary" id="memo-save">残す</button></div>
+  </div>
 </div>
 
 <script>
@@ -927,13 +954,44 @@ const urlCache = new Map();
 const thumbURL = p => { if (!urlCache.has(p.id)) urlCache.set(p.id, URL.createObjectURL(p.thumb)); return urlCache.get(p.id); };
 const fmtClock = t => { const d = new Date(t), z = n => String(n).padStart(2, "0"); return `${d.getMonth() + 1}/${d.getDate()} ${z(d.getHours())}:${z(d.getMinutes())}`; };
 const photoMarkers = new Map();   // 写真のid → 地図の印
+// 写真の記録を、保存されている最新のものに対して直す（地質の自動記入・メモ・向きが同時に動いても上書きし合わないように）
+async function updatePhoto(id, fn){
+  const cur = await pdb.get(id); if (!cur) return null;
+  fn(cur); await pdb.put(cur);
+  const m = photoMarkers.get(id); if (m) m.photo = cur;
+  return cur;
+}
+const br = s => esc(s).replace(/\n/g, "<br>");
+function memoHtml(p){
+  const rows = [["地質（撮影者）", p.geoObs], ["地質構造", p.structure], ["コメント", p.note]].filter(([, v]) => v);
+  return rows.length ? `<div class="memo">${rows.map(([k, v]) => `<b>${k}：</b>${br(v)}`).join("<br>")}</div>` : "";
+}
 function photoPopupHtml(p){
   const geo = p.geo ? `${esc(p.geo.lithology_ja)}<span class="note">（${esc(p.geo.formationAge_ja)}）</span>` : '<span class="note">（地質は電波のある所で調べます）</span>';
+  const hasMemo = p.geoObs || p.structure || p.note;
   return `<div class="ppop" data-id="${p.id}"><img src="${thumbURL(p)}" alt="写真" data-act="view">
     <div class="pr"><b>${fmtClock(p.t)}</b>　撮影方向：<b>${dirName(p.heading)}</b>${p.headingSrc === "manual" ? "（手で直した）" : p.heading != null ? "（方位磁針）" : ""}<br>
-    位置の誤差 約${Math.round(p.acc || 0)} m<br>地質：${geo}</div>
-    <div class="pa"><button data-act="view">大きく見る</button><button data-act="dir">向きを直す</button><button data-act="save">写真を保存</button><button data-act="del">消す</button></div></div>`;
+    位置の誤差 約${Math.round(p.acc || 0)} m<br>地質（自動）：${geo}</div>${memoHtml(p)}
+    <div class="pa"><button data-act="memo">${hasMemo ? "メモを直す" : "メモを書く"}</button><button data-act="view">大きく見る</button><button data-act="dir">向きを直す</button><button data-act="save">写真を保存</button><button data-act="del">消す</button></div></div>`;
 }
+// 撮影者のメモ（地質の見立て・地質構造・コメント）
+function openMemo(p){
+  const box = $("#memo");
+  box.dataset.id = p.id;
+  $("#memo-img").src = thumbURL(p);
+  $("#memo-auto").textContent = `${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}　自動の地質：${p.geo ? p.geo.lithology_ja : "（調べています／電波のある所で入ります）"}`;
+  $("#memo-geo").value = p.geoObs || ""; $("#memo-str").value = p.structure || ""; $("#memo-note").value = p.note || "";
+  box.hidden = false;
+}
+$("#memo-later").addEventListener("click", () => { $("#memo").hidden = true; });
+$("#memo-save").addEventListener("click", async () => {
+  const id = $("#memo").dataset.id, v = s => $(s).value.trim();
+  const p = await updatePhoto(id, cur => { cur.geoObs = v("#memo-geo"); cur.structure = v("#memo-str"); cur.note = v("#memo-note"); });
+  $("#memo").hidden = true;
+  if (!p) return toast("写真が見つかりませんでした。", 4000);
+  map.closePopup();
+  toast("メモを残しました。");
+});
 function addPhotoMarker(p, layer){
   const m = L.marker([p.lat, p.lon], {icon: photoIcon(p.heading), zIndexOffset: 1200})
     .bindPopup(() => photoPopupHtml(p), {maxWidth: 240, autoPanPaddingTopLeft: L.point(10, 72), autoPanPaddingBottomRight: L.point(10, 50)});
@@ -986,15 +1044,24 @@ $("#photo-in").addEventListener("change", async e => {
     const p = {id: shot.t + "-" + Math.random().toString(36).slice(2, 6), rec: rec.data.start, t: shot.t,
                lat: shot.lat, lon: shot.lon, acc: shot.acc, alt: shot.alt,
                heading: shot.heading, headingSrc: shot.heading == null ? null : "compass", headingDevice: shot.hsrc, headingAcc: shot.hacc,
-               w: big.w, h: big.h, blob: big.blob, thumb: small.blob, geo: null, name: file.name || ""};
+               w: big.w, h: big.h, blob: big.blob, thumb: small.blob, geo: null, name: file.name || "",
+               geoObs: "", structure: "", note: ""};   // 撮影者のメモ（地質の見立て・地質構造・コメント）
     await pdb.put(p);
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     await drawRecPhotos();
     toast(`写真を残しました（撮影方向：${dirName(p.heading)}）。`, 3000);
+    openMemo(p);   // 撮った直後にメモを書けるようにする（「あとで書く」も可）
     // その場所の地質を調べて写真に添える（電波がなければあとで）
     try {
       const r = await fetch(LEGEND_API + p.lat.toFixed(6) + "," + p.lon.toFixed(6));
-      if (r.ok) { const g = await r.json(); if (g && g.lithology_ja) { p.geo = {lithology_ja: g.lithology_ja, formationAge_ja: g.formationAge_ja, group_ja: g.group_ja, symbol: g.symbol}; await pdb.put(p); } }
+      if (r.ok) {
+        const g = await r.json();
+        if (g && g.lithology_ja) {
+          const geoAuto = {lithology_ja: g.lithology_ja, formationAge_ja: g.formationAge_ja, group_ja: g.group_ja, symbol: g.symbol};
+          await updatePhoto(p.id, cur => { cur.geo = geoAuto; });
+          if (!$("#memo").hidden && $("#memo").dataset.id === p.id) $("#memo-auto").textContent = `${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}　自動の地質：${g.lithology_ja}`;
+        }
+      }
     } catch { /* 電波なし */ }
   } catch (err) {
     toast("写真を残せませんでした（" + err.message + "）。スマホの空き容量を確かめてください。", 6000);
@@ -1022,17 +1089,20 @@ async function savePhotoFile(p){
 function openViewer(p){
   const v = $("#viewer"), img = v.querySelector("img");
   img.src = URL.createObjectURL(p.blob); v.dataset.id = p.id;
-  $("#viewer-cap").textContent = `${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}${p.geo ? "　" + p.geo.lithology_ja : ""}`;
+  $("#viewer-cap").innerHTML = esc(`${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}${p.geo ? "　自動の地質：" + p.geo.lithology_ja : ""}`) +
+    [["地質（撮影者）", p.geoObs], ["地質構造", p.structure], ["コメント", p.note]].filter(([, v]) => v).map(([k, v]) => `<br>${k}：${br(v)}`).join("");
   v.hidden = false;
 }
 $("#viewer-close").addEventListener("click", () => { const v = $("#viewer"), img = v.querySelector("img"); URL.revokeObjectURL(img.src); img.removeAttribute("src"); v.hidden = true; });
 $("#viewer-save").addEventListener("click", async () => { const p = await pdb.get($("#viewer").dataset.id); if (p) savePhotoFile(p); });
-map.on("popupopen", ev => {
-  const box = ev.popup.getElement().querySelector(".ppop"); if (!box) return;
-  const m = photoMarkers.get(box.dataset.id); if (!m) return;
-  box.addEventListener("click", async e => {
-    const b = e.target.closest("[data-act]"); if (!b) return;
-    const p = m.photo;
+// 吹き出しのボタンは、ページ全体でまとめて受ける。吹き出しは開き直すたびに中身が描き直されるので、
+// 吹き出しの中に直接付けると、同じ印を2回押したときにボタンが効かなくなるため（2026-11-27の試験で判明）。
+document.addEventListener("click", async e => {
+    const box = e.target.closest(".ppop"); if (!box) return;
+    const b = e.target.closest("[data-act]"); if (!b || !box.contains(b)) return;
+    const m = photoMarkers.get(box.dataset.id); if (!m) return;
+    const p = (await pdb.get(m.photo.id)) || m.photo; m.photo = p;   // メモ・地質が入った最新のもの
+    if (b.dataset.act === "memo") { map.closePopup(); openMemo(p); }
     if (b.dataset.act === "view") openViewer(p);
     if (b.dataset.act === "save") savePhotoFile(p);
     if (b.dataset.act === "del") {
@@ -1047,18 +1117,23 @@ map.on("popupopen", ev => {
       box.insertAdjacentHTML("beforeend", `<div class="hed">撮影方向：<b class="hv">${dirName(start)}</b>
         <input type="range" min="0" max="359" step="1" value="${Math.round(start)}">
         <div class="pa"><button data-h="-10">−10°</button><button data-h="10">＋10°</button><button data-h="ok"><b>決める</b></button><button data-h="cancel">やめる</button></div></div>`);
-      m.getPopup().update();   // 欄が増えたぶん、吹き出しが画面に収まるよう地図をずらす
+      // 欄が増えたぶん、吹き出しが画面の上にはみ出したら地図をずらす（中身は描き直さない）
+      const top = box.closest(".leaflet-popup").getBoundingClientRect().top;
+      if (top < 72) map.panBy([0, top - 72]);
       const rng = box.querySelector(".hed input"), show = h => { box.querySelector(".hv").textContent = dirName(h); m.setIcon(photoIcon(h)); };
       rng.addEventListener("input", () => show(+rng.value));
       show(start);
       box.querySelector(".hed").addEventListener("click", async ev2 => {
         const k = ev2.target.closest("[data-h]"); if (!k) return; ev2.stopPropagation();
-        if (k.dataset.h === "ok") { p.heading = +rng.value; p.headingSrc = "manual"; await pdb.put(p); m.setIcon(photoIcon(p.heading)); map.closePopup(); toast(`撮影方向を ${dirName(p.heading)} に直しました。`); }
+        if (k.dataset.h === "ok") {
+          const h = +rng.value;
+          await updatePhoto(p.id, cur => { cur.heading = h; cur.headingSrc = "manual"; });
+          m.setIcon(photoIcon(h)); map.closePopup(); toast(`撮影方向を ${dirName(h)} に直しました。`);
+        }
         else if (k.dataset.h === "cancel") { m.setIcon(photoIcon(before)); map.closePopup(); }
         else { rng.value = (+rng.value + +k.dataset.h + 360) % 360; show(+rng.value); }
       });
     }
-  });
 });
 
 // 前回の記録が途中で残っていたら、一時停止の状態で戻す

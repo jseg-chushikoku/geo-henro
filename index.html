@@ -155,7 +155,7 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 .leaflet-control-attribution{font-size:10px}
 
 /* お知らせ */
-#toast{position:fixed;z-index:1100;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%) translateY(-10px);
+#toast{position:fixed;z-index:1260;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%) translateY(-10px);
   background:var(--ink);color:var(--card);padding:8px 14px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;max-width:calc(100% - 32px)}
 #toast.on{opacity:1;transform:translateX(-50%)}
 #err{display:none;background:#fde8e6;color:#8a1c12;border:1px solid #e0a39c;padding:8px 10px;border-radius:8px;font-size:12.5px;margin-bottom:10px}
@@ -212,6 +212,20 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
   background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
 #memo .memo-btns{display:flex;gap:8px;margin-top:14px}
 #memo .memo-btns .btn{flex:1;margin-top:0;padding:11px 0;font-size:14.5px;font-weight:700}
+/* 写真への書き込み（矢印・丸・自由線・番号） */
+#draw{position:fixed;inset:0;z-index:1250;background:#151412;color:#eee;display:flex;flex-direction:column;touch-action:none}
+#draw .dw-top{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px}
+#draw .dw-top span{flex:1;text-align:center;font-weight:700;font-size:15px}
+#draw .dw-stage{flex:1;min-height:0;display:grid;place-items:center;padding:4px}
+#draw canvas{touch-action:none;display:block;box-shadow:0 0 0 1px #333}
+#draw .dw-bar{display:flex;gap:6px;padding:6px 10px;flex-wrap:wrap;justify-content:center}
+#draw .dw-bar:last-child{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+#draw button{font:inherit;font-size:14px;border:1px solid #555;background:#26241f;color:#eee;border-radius:10px;padding:8px 12px;cursor:pointer;min-width:44px}
+#draw button[aria-pressed=true]{background:#f2efe7;color:#151412;border-color:#f2efe7;font-weight:700}
+#draw .dw-top .primary{background:#e65100;border-color:#e65100;color:#fff;font-weight:700}
+#draw button.sw{width:36px;height:36px;min-width:0;padding:0;border-radius:50%;border:3px solid #555}
+#draw button.sw[aria-pressed=true]{border-color:#fff;box-shadow:0 0 0 2px #e65100}
+#draw button:disabled{opacity:.35;cursor:default}
 /* ポケットモード：真っ黒な画面で記録を続ける（画面は点いたまま。さわっても反応しない） */
 #pocket{position:fixed;inset:0;z-index:1300;background:#000;color:#4d4d4d;display:flex;align-items:center;justify-content:center;
   touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
@@ -393,7 +407,25 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 </div>
 <div id="viewer" hidden>
   <img alt="">
-  <div class="vbar"><span id="viewer-cap"></span><button type="button" id="viewer-save">写真を保存</button><button type="button" id="viewer-close">閉じる</button></div>
+  <div class="vbar"><span id="viewer-cap"></span><button type="button" id="viewer-draw">書き込む</button><button type="button" id="viewer-save">写真を保存</button><button type="button" id="viewer-close">閉じる</button></div>
+</div>
+<div id="draw" hidden aria-label="写真に書き込む">
+  <div class="dw-top"><button type="button" id="dw-cancel">やめる</button><span>写真に書き込む</span><button type="button" class="primary" id="dw-save">残す</button></div>
+  <div class="dw-stage"><canvas id="dw-canvas"></canvas></div>
+  <div class="dw-bar" id="dw-tools">
+    <button type="button" data-tool="arrow" aria-pressed="true">→ 矢印</button>
+    <button type="button" data-tool="circle" aria-pressed="false">〇 丸</button>
+    <button type="button" data-tool="free" aria-pressed="false">✎ 線</button>
+    <button type="button" data-tool="num" aria-pressed="false">① 番号</button>
+  </div>
+  <div class="dw-bar" id="dw-opts">
+    <button type="button" class="sw" data-color="#e53935" aria-pressed="true" style="background:#e53935" aria-label="赤"></button>
+    <button type="button" class="sw" data-color="#ffd600" aria-pressed="false" style="background:#ffd600" aria-label="黄"></button>
+    <button type="button" class="sw" data-color="#ffffff" aria-pressed="false" style="background:#ffffff" aria-label="白"></button>
+    <button type="button" class="sw" data-color="#111111" aria-pressed="false" style="background:#111111" aria-label="黒"></button>
+    <button type="button" data-w="1" aria-pressed="true">細</button><button type="button" data-w="2" aria-pressed="false">太</button>
+    <button type="button" id="dw-undo">↶ 1つ戻す</button><button type="button" id="dw-clear">全部消す</button>
+  </div>
 </div>
 <div id="memo" hidden>
   <div class="memo-box" role="dialog" aria-label="写真のメモ">
@@ -1073,8 +1105,8 @@ function photoPopupHtml(p){
   const hasMemo = p.geoObs || p.structure || p.note;
   return `<div class="ppop" data-id="${p.id}"><img src="${thumbURL(p)}" alt="写真" data-act="view">
     <div class="pr"><b>${fmtClock(p.t)}</b>　撮影方向：<b>${dirName(p.heading)}</b>${p.headingSrc === "manual" ? "（手で直した）" : p.heading != null ? "（方位磁針）" : ""}<br>
-    位置の誤差 約${Math.round(p.acc || 0)} m<br>地質（自動）：${geo}</div>${memoHtml(p)}
-    <div class="pa"><button data-act="memo">${hasMemo ? "メモを直す" : "メモを書く"}</button><button data-act="view">大きく見る</button><button data-act="dir">向きを直す</button><button data-act="save">写真を保存</button><button data-act="del">消す</button></div></div>`;
+    位置の誤差 約${Math.round(p.acc || 0)} m<br>地質（自動）：${geo}${p.marks && p.marks.length ? '<br><span class="note">（書き込みあり・元の写真も保存）</span>' : ""}</div>${memoHtml(p)}
+    <div class="pa"><button data-act="memo">${hasMemo ? "メモを直す" : "メモを書く"}</button><button data-act="draw">${p.marks && p.marks.length ? "書き込みを直す" : "書き込む"}</button><button data-act="view">大きく見る</button><button data-act="dir">向きを直す</button><button data-act="save">写真を保存</button><button data-act="del">消す</button></div></div>`;
 }
 // 撮影者のメモ（地質の見立て・地質構造・コメント）
 function openMemo(p){
@@ -1096,7 +1128,7 @@ $("#memo-save").addEventListener("click", async () => {
 });
 function addPhotoMarker(p, layer){
   const m = L.marker([p.lat, p.lon], {icon: photoIcon(p.heading), zIndexOffset: 1200})
-    .bindPopup(() => photoPopupHtml(p), {maxWidth: 240, autoPanPaddingTopLeft: L.point(10, 72), autoPanPaddingBottomRight: L.point(10, 50)});
+    .bindPopup(() => photoPopupHtml(m.photo), {maxWidth: 240, autoPanPaddingTopLeft: L.point(10, 72), autoPanPaddingBottomRight: L.point(10, 50)});
   m.photo = p; photoMarkers.set(p.id, m);
   return m.addTo(layer);
 }
@@ -1183,7 +1215,7 @@ $("#rec-photos").addEventListener("click", e => {
 // 写真の印の吹き出しのボタン
 async function savePhotoFile(p){
   const d = new Date(p.t), z = n => String(n).padStart(2, "0");
-  const f = new File([p.blob], `henro_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.jpg`, {type: "image/jpeg"});
+  const f = new File([p.blobMarked || p.blob], `henro_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.jpg`, {type: "image/jpeg"});
   if (navigator.canShare && navigator.canShare({files: [f]})) {
     try { await navigator.share({files: [f]}); return; } catch (err) { if (err.name === "AbortError") return; }
   }
@@ -1191,12 +1223,14 @@ async function savePhotoFile(p){
 }
 function openViewer(p){
   const v = $("#viewer"), img = v.querySelector("img");
-  img.src = URL.createObjectURL(p.blob); v.dataset.id = p.id;
+  img.src = URL.createObjectURL(p.blobMarked || p.blob); v.dataset.id = p.id;
   $("#viewer-cap").innerHTML = esc(`${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}${p.geo ? "　自動の地質：" + p.geo.lithology_ja : ""}`) +
     [["地質（撮影者）", p.geoObs], ["地質構造", p.structure], ["コメント", p.note]].filter(([, v]) => v).map(([k, v]) => `<br>${k}：${br(v)}`).join("");
   v.hidden = false;
 }
-$("#viewer-close").addEventListener("click", () => { const v = $("#viewer"), img = v.querySelector("img"); URL.revokeObjectURL(img.src); img.removeAttribute("src"); v.hidden = true; });
+function closeViewer(){ const v = $("#viewer"), img = v.querySelector("img"); if (img.src) URL.revokeObjectURL(img.src); img.removeAttribute("src"); v.hidden = true; }
+$("#viewer-close").addEventListener("click", closeViewer);
+$("#viewer-draw").addEventListener("click", async () => { const p = await pdb.get($("#viewer").dataset.id); if (!p) return; closeViewer(); openDraw(p, true); });
 $("#viewer-save").addEventListener("click", async () => { const p = await pdb.get($("#viewer").dataset.id); if (p) savePhotoFile(p); });
 // 吹き出しのボタンは、ページ全体でまとめて受ける。吹き出しは開き直すたびに中身が描き直されるので、
 // 吹き出しの中に直接付けると、同じ印を2回押したときにボタンが効かなくなるため（2026-11-27の試験で判明）。
@@ -1207,6 +1241,7 @@ document.addEventListener("click", async e => {
     const p = (await pdb.get(m.photo.id)) || m.photo; m.photo = p;   // メモ・地質が入った最新のもの
     if (b.dataset.act === "memo") { map.closePopup(); openMemo(p); }
     if (b.dataset.act === "view") openViewer(p);
+    if (b.dataset.act === "draw") { map.closePopup(); openDraw(p); }
     if (b.dataset.act === "save") savePhotoFile(p);
     if (b.dataset.act === "del") {
       if (!confirm("この写真を消します。消すと元に戻せません。よろしいですか？")) return;
@@ -1237,6 +1272,153 @@ document.addEventListener("click", async e => {
         else { rng.value = (+rng.value + +k.dataset.h + 360) % 360; show(+rng.value); }
       });
     }
+});
+
+// ---------- 写真への書き込み（矢印・丸・自由線・番号） ----------
+// 元の写真（blob）はそのまま残し、書き込みは marks（写真の幅・高さを1とした割合の座標）として別に持つ。
+// 書き込みを焼き込んだ写真は blobMarked。吹き出し・拡大・保存・送るときはこちらを使い、ZIPには元の写真も入れる。
+const LIGHT_INK = ["#ffd600", "#ffffff"];
+function drawMarks(g, marks, W, H){
+  const S = Math.max(W, H);
+  g.save(); g.lineCap = "round"; g.lineJoin = "round";
+  for (const k of marks) {
+    const lw = S * (k.w === 2 ? 0.009 : 0.005), light = LIGHT_INK.includes(k.c);
+    g.strokeStyle = g.fillStyle = k.c; g.lineWidth = lw;
+    g.shadowColor = light ? "rgba(0,0,0,.7)" : "rgba(255,255,255,.75)"; g.shadowBlur = lw * .9;   // どんな地の色でも見えるように縁をぼかす
+    if (k.t === "arrow") {
+      const x1 = k.a[0] * W, y1 = k.a[1] * H, x2 = k.b[0] * W, y2 = k.b[1] * H, ang = Math.atan2(y2 - y1, x2 - x1);
+      const hl = Math.max(lw * 3.6, S * 0.024), sp = .5;
+      g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2 - Math.cos(ang) * hl * .8, y2 - Math.sin(ang) * hl * .8); g.stroke();
+      g.beginPath(); g.moveTo(x2, y2);
+      g.lineTo(x2 - hl * Math.cos(ang - sp), y2 - hl * Math.sin(ang - sp)); g.lineTo(x2 - hl * Math.cos(ang + sp), y2 - hl * Math.sin(ang + sp));
+      g.closePath(); g.fill();
+    } else if (k.t === "circle") {
+      const cx = (k.a[0] + k.b[0]) / 2 * W, cy = (k.a[1] + k.b[1]) / 2 * H;
+      const rx = Math.abs(k.b[0] - k.a[0]) / 2 * W, ry = Math.abs(k.b[1] - k.a[1]) / 2 * H;
+      g.beginPath(); g.ellipse(cx, cy, Math.max(rx, 1), Math.max(ry, 1), 0, 0, Math.PI * 2); g.stroke();
+    } else if (k.t === "free") {
+      g.beginPath(); k.p.forEach(([x, y], i) => i ? g.lineTo(x * W, y * H) : g.moveTo(x * W, y * H));
+      if (k.p.length === 1) g.lineTo(k.p[0][0] * W + .1, k.p[0][1] * H);
+      g.stroke();
+    } else if (k.t === "num") {
+      const x = k.a[0] * W, y = k.a[1] * H, r = S * (k.w === 2 ? 0.03 : 0.022);
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      g.shadowBlur = 0; g.lineWidth = r * .14; g.strokeStyle = light ? "#111" : "#fff"; g.stroke();
+      g.fillStyle = light ? "#111" : "#fff"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.font = `700 ${Math.round(r * (k.n > 9 ? 1.05 : 1.3))}px system-ui, -apple-system, sans-serif`;
+      g.fillText(String(k.n), x, y + r * .06);
+    }
+  }
+  g.restore();
+}
+const dw = {p: null, img: null, url: null, marks: [], start: "[]", tool: "arrow", color: "#e53935", w: 1, cur: null, pid: null, fromViewer: false};
+const dwCv = $("#dw-canvas");
+function dwRender(){
+  if (!dw.img) return;
+  const g = dwCv.getContext("2d"), W = dwCv.width, H = dwCv.height;
+  g.clearRect(0, 0, W, H); g.drawImage(dw.img, 0, 0, W, H);
+  drawMarks(g, dw.cur ? [...dw.marks, dw.cur] : dw.marks, W, H);
+  $("#dw-undo").disabled = $("#dw-clear").disabled = !dw.marks.length;
+}
+function dwLayout(){
+  if (!dw.img || $("#draw").hidden) return;
+  const r = $("#draw .dw-stage").getBoundingClientRect(), iw = dw.img.naturalWidth, ih = dw.img.naturalHeight;
+  const s = Math.min((r.width - 8) / iw, (r.height - 8) / ih), dpr = window.devicePixelRatio || 1;
+  const cw = Math.max(1, Math.floor(iw * s)), ch = Math.max(1, Math.floor(ih * s));
+  dwCv.style.width = cw + "px"; dwCv.style.height = ch + "px";
+  dwCv.width = Math.round(cw * dpr); dwCv.height = Math.round(ch * dpr);
+  dwRender();
+}
+async function openDraw(p, fromViewer = false){
+  const url = URL.createObjectURL(p.blob), img = new Image();   // 書き込むのは、いつも元の写真の上
+  img.src = url;
+  try { await img.decode(); } catch { URL.revokeObjectURL(url); return toast("写真を開けませんでした。", 4000); }
+  Object.assign(dw, {p, img, url, marks: JSON.parse(JSON.stringify(p.marks || [])), cur: null, pid: null, fromViewer});
+  dw.start = JSON.stringify(dw.marks);
+  $("#draw").hidden = false;
+  requestAnimationFrame(dwLayout);
+}
+function closeDraw(){
+  $("#draw").hidden = true;
+  if (dw.url) URL.revokeObjectURL(dw.url);
+  Object.assign(dw, {p: null, img: null, url: null, marks: [], cur: null, pid: null});
+}
+window.addEventListener("resize", () => requestAnimationFrame(dwLayout));
+const dwPt = e => { const r = dwCv.getBoundingClientRect(), c = v => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
+  return [c((e.clientX - r.left) / r.width), c((e.clientY - r.top) / r.height)]; };
+dwCv.addEventListener("pointerdown", e => {
+  if (!dw.img || dw.cur) return;   // 2本目の指は使わない
+  e.preventDefault();
+  const q = dwPt(e), c = dw.color, w = dw.w;
+  dw.pid = e.pointerId; try { dwCv.setPointerCapture(e.pointerId); } catch {}
+  if (dw.tool === "num") dw.cur = {t: "num", a: q, n: Math.max(0, ...dw.marks.filter(k => k.t === "num").map(k => k.n)) + 1, c, w};
+  else if (dw.tool === "free") dw.cur = {t: "free", p: [q], c, w};
+  else dw.cur = {t: dw.tool, a: q, b: q, c, w};
+  dwRender();
+});
+dwCv.addEventListener("pointermove", e => {
+  if (!dw.cur || e.pointerId !== dw.pid) return;
+  e.preventDefault();
+  const q = dwPt(e), k = dw.cur;
+  if (k.t === "num") k.a = q;   // 番号は指を離すまで動かせる
+  else if (k.t === "free") { const l = k.p.at(-1); if (Math.hypot(q[0] - l[0], q[1] - l[1]) > .003) k.p.push(q); }
+  else k.b = q;
+  dwRender();
+});
+function dwEnd(e){
+  if (!dw.cur || e.pointerId !== dw.pid) return;
+  const k = dw.cur; dw.cur = null; dw.pid = null;
+  let keep = e.type !== "pointercancel";
+  if (k.t === "arrow") keep = keep && Math.hypot(k.b[0] - k.a[0], k.b[1] - k.a[1]) > .025;    // 短すぎるのは、さわっただけとみなす
+  if (k.t === "circle") keep = keep && Math.abs(k.b[0] - k.a[0]) > .015 && Math.abs(k.b[1] - k.a[1]) > .015;
+  if (k.t === "free") keep = keep && k.p.length > 1;
+  if (keep) dw.marks.push(k);
+  else if (k.t !== "num" && e.type !== "pointercancel") toast(k.t === "arrow" ? "矢印は、指を置いたまま矢の向きへなぞってください。" : k.t === "circle" ? "丸は、囲みたい所を斜めになぞってください。" : "線は、指を置いたままなぞってください。", 3000);
+  dwRender();
+}
+dwCv.addEventListener("pointerup", dwEnd);
+dwCv.addEventListener("pointercancel", dwEnd);
+const pressOne = (box, sel, b) => box.querySelectorAll(sel).forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+$("#dw-tools").addEventListener("click", e => { const b = e.target.closest("[data-tool]"); if (!b) return; dw.tool = b.dataset.tool; pressOne($("#dw-tools"), "[data-tool]", b); });
+$("#dw-opts").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.color) { dw.color = b.dataset.color; pressOne($("#dw-opts"), "[data-color]", b); }
+  if (b.dataset.w) { dw.w = +b.dataset.w; pressOne($("#dw-opts"), "[data-w]", b); }
+});
+$("#dw-undo").addEventListener("click", () => { dw.marks.pop(); dwRender(); });
+$("#dw-clear").addEventListener("click", () => {
+  if (!dw.marks.length || !confirm("書き込みを全部消します。よろしいですか？（「残す」を押すまでは写真に反映されません）")) return;
+  dw.marks = []; dwRender();
+});
+$("#dw-cancel").addEventListener("click", () => {
+  const p = dw.p, back = dw.fromViewer;
+  if (JSON.stringify(dw.marks) !== dw.start && !confirm("書き込みを残さずに閉じます。よろしいですか？")) return;
+  closeDraw();
+  if (back && p) openViewer(p);
+});
+$("#dw-save").addEventListener("click", async () => {
+  const p = dw.p, marks = dw.marks, back = dw.fromViewer; if (!p || !dw.img) return;
+  const btn = $("#dw-save"); btn.disabled = true;
+  try {
+    let marked = null, thumb;
+    if (marks.length) {
+      const W = dw.img.naturalWidth, H = dw.img.naturalHeight, c = document.createElement("canvas");
+      c.width = W; c.height = H; const g = c.getContext("2d");
+      g.drawImage(dw.img, 0, 0); drawMarks(g, marks, W, H);
+      marked = await new Promise(ok => c.toBlob(ok, "image/jpeg", .85));
+      if (!marked) throw new Error("写真を作れませんでした");
+      thumb = (await shrink(marked, 360, .72)).blob;
+    } else thumb = (await shrink(p.blob, 360, .72)).blob;   // 書き込みを全部消したときは元の写真に戻す
+    const cur = await updatePhoto(p.id, x => { x.marks = marks; x.blobMarked = marked; x.thumb = thumb; x.markedAt = marks.length ? Date.now() : null; });
+    if (!cur) throw new Error("写真が見つかりません");
+    const old = urlCache.get(p.id); if (old) { URL.revokeObjectURL(old); urlCache.delete(p.id); }   // 小さい写真を描き直す
+    if (rec.data && cur.rec === rec.data.start) await drawRecPhotos();
+    closeDraw();
+    toast(marks.length ? `書き込みを残しました（${marks.length}か所）。元の写真もそのまま残っています。` : "書き込みをなくし、元の写真に戻しました。", 3500);
+    if (back) openViewer(cur);
+  } catch (err) {
+    toast("書き込みを残せませんでした（" + err.message + "）。", 5000);
+  } finally { btn.disabled = false; }
 });
 
 // 前回の記録が途中で残っていたら、一時停止の状態で戻す
@@ -1394,8 +1576,8 @@ function buildExif(p, title){
   write(ifd0, o0); write(exif, oE); write(gps, oG);
   return buf;
 }
-async function jpegWithExif(p, title){
-  const jpg = new Uint8Array(await p.blob.arrayBuffer());
+async function jpegWithExif(p, title, blob = p.blob){
+  const jpg = new Uint8Array(await blob.arrayBuffer());
   if (jpg[0] !== 0xFF || jpg[1] !== 0xD8) return jpg;   // JPEGでなければそのまま
   const tiff = buildExif(p, title), len = 2 + 6 + tiff.length;
   const out = new Uint8Array(jpg.length + 2 + len);
@@ -1423,10 +1605,15 @@ async function buildPackage(t){
   const gpx = buildGpx(t).replace(/<\/metadata>\n/, `</metadata>\n${wpts}\n`);
   // 一覧表（Excelで文字化けしないよう、先頭にBOM）
   const head = ["番号", "写真ファイル", "撮影日時", "緯度", "経度", "標高m", "位置の誤差m", "撮影方向（真北から時計回り°）", "撮影方向（16方位）", "方向の決め方",
-                "地質（自動）", "地質時代（自動）", "地質の大区分（自動）", "地質（撮影者）", "地質構造", "コメント"];
+                "地質（自動）", "地質時代（自動）", "地質の大区分（自動）", "地質（撮影者）", "地質構造", "コメント", "書き込み", "元の写真（書き込み前）"];
+  const marked = p => !!(p.blobMarked && p.marks && p.marks.length);
+  const markText = p => { if (!marked(p)) return ""; const c = {arrow: 0, circle: 0, free: 0, num: 0}; p.marks.forEach(k => c[k.t]++);
+    return [["矢印", c.arrow], ["丸", c.circle], ["線", c.free], ["番号", c.num]].filter(([, n]) => n).map(([k, n]) => k + n).join("・"); };
   const rows = photos.map((p, i) => [i + 1, "photos/" + names[i], stamp(p.t, "/", " ", ":"), p.lat.toFixed(6), p.lon.toFixed(6), p.alt == null ? "" : (+p.alt).toFixed(1),
     Math.round(p.acc || 0), p.heading == null ? "" : p.heading.toFixed(1), p.heading == null ? "" : DIR16[Math.round(p.heading / 22.5) % 16],
-    p.heading == null ? "なし" : p.headingSrc === "manual" ? "手で直した" : "方位磁針", p.geo?.lithology_ja, p.geo?.formationAge_ja, p.geo?.group_ja, p.geoObs, p.structure, p.note]);
+    p.heading == null ? "なし" : p.headingSrc === "manual" ? "手で直した" : "方位磁針", p.geo?.lithology_ja, p.geo?.formationAge_ja, p.geo?.group_ja, p.geoObs, p.structure, p.note,
+    markText(p), marked(p) ? "photos_original/" + names[i] : ""]);
+  const anyMarked = photos.some(marked);
   const csv = "﻿" + [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
   // Google Earth（Pro）用：ZIPを開いたフォルダで map_GoogleEarth.kml を開くと、写真と矢印が出る
   const kmlPts = photos.map((p, i) => `<Placemark><name>写真${z2(i + 1)}</name><description><![CDATA[<img src="photos/${names[i]}" width="360"><br>${memoLines(p).map(esc).join("<br>")}]]></description>` +
@@ -1442,6 +1629,8 @@ ${kmlPts}
   const readme = "﻿" + [`ジオ遍路の記録：${t.name}`, `距離 ${t.km.toFixed(2)} km／遍路道に沿って ${t.onKm.toFixed(2)} km／写真 ${photos.length}枚`, "",
     "■ 中身", "track.gpx …… 歩いた道と写真の地点（登山アプリ・地図ソフトで開けます）",
     "photos\\ …… 写真。ファイルの中に位置・撮影方向（真北から時計回り）・日時・メモを書き込んでいます",
+    ...(anyMarked ? ["　　　　　 矢印・丸・線・番号を書き込んだ写真は、書き込みの入った形で入っています",
+                     "photos_original\\ …… 書き込みをした写真の、書き込む前の元の写真（同じファイル名）"] : []),
     "photos.csv …… 写真の一覧表（Excelで開けます）。地質（自動）と撮影者のメモ（地質・地質構造・コメント）",
     "map_GoogleEarth.kml …… Google Earth Pro で開くと、歩いた道と写真（向きの矢印つき）が出ます。このZIPを展開したフォルダのまま開いてください",
     "", "■ 注意", "撮影方向は、スマホの方位磁針で測った向きを四国の偏角（西偏約7.7°）で真北に直したものです。数十度ずれることがあります。",
@@ -1455,7 +1644,11 @@ ${kmlPts}
     {name: `${base}/files/arrow.png`, data: await iconPng(true), date: when},
     {name: `${base}/files/dot.png`, data: await iconPng(false), date: when},
   ];
-  for (let i = 0; i < photos.length; i++) files.push({name: `${base}/photos/${names[i]}`, data: await jpegWithExif(photos[i], `写真${z2(i + 1)}`), date: photos[i].t});
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i], title = `写真${z2(i + 1)}`;
+    files.push({name: `${base}/photos/${names[i]}`, data: await jpegWithExif(p, title, marked(p) ? p.blobMarked : p.blob), date: p.t});
+    if (marked(p)) files.push({name: `${base}/photos_original/${names[i]}`, data: await jpegWithExif(p, title + "（元）"), date: p.t});
+  }
   return new File([makeZip(files)], `${base}.zip`, {type: "application/zip"});
 }
 function saveFile(f){

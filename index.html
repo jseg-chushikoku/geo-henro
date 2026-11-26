@@ -182,7 +182,10 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 #dl-box .dl-how{margin:0 0 8px;font-size:13px}
 #dl-box .dl-detail{display:block}
 #dl-box .dl-detail .seg{margin:4px 0 6px}
-#dl-prog{margin-top:8px;font-size:13px}
+/* 進み具合は画面の上に浮かせる（スマホでは保存中に操作板が下がるため） */
+#dl-prog{position:fixed;z-index:1050;left:50%;transform:translateX(-50%);top:calc(62px + env(safe-area-inset-top));width:min(92vw,380px);
+  background:var(--card);color:var(--ink);border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.25);padding:10px 12px;font-size:13px}
+#dl-prog .btn{margin:6px 0 0;padding:5px 14px}
 #dl-prog .dl-bar{height:8px;border-radius:4px;background:var(--paper);overflow:hidden;margin-bottom:4px}
 #dl-prog .dl-bar i{display:block;height:100%;width:0;background:#e65100;transition:width .2s}
 .tracks .empty{color:var(--muted);font-size:13px;border:0}
@@ -269,6 +272,7 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 
 <div id="brand"><div class="mark">遍</div><b>ジオ遍路</b><span>試作</span></div>
 <div class="offline-badge">電波なし・保存した地図で表示中</div>
+<div id="dl-prog" hidden role="status"><div class="dl-bar"><i></i></div><span class="dl-txt"></span><br><button class="btn" id="btn-dl-stop" type="button">止める</button></div>
 <button id="rec-pill" hidden>記録中 <span id="rec-pill-km">0.00 km</span></button>
 
 <div id="fabs">
@@ -383,7 +387,6 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
           <div class="field dl-detail"><span>くわしさ</span>
             <div class="seg" id="dl-zoom"><button type="button" data-z="16" aria-pressed="true">ふつう（〜1/1万）</button><button type="button" data-z="17" aria-pressed="false">くわしい（〜1/5千）</button></div></div>
           <button class="btn primary" id="btn-dl-view" type="button">表示中の範囲を電波なし用に保存</button>
-          <div id="dl-prog" hidden><div class="dl-bar"><i></i></div><span class="dl-txt"></span> <button class="btn" id="btn-dl-stop" type="button">止める</button></div>
         </div>
         <div id="cache-count" class="note" style="margin-top:6px"></div>
         <button class="btn" id="btn-clear-cache" hidden>残した地図を消す</button>

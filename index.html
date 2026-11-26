@@ -169,6 +169,26 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 #rec-pill::before{content:"";width:9px;height:9px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
 #rec-pill.paused{background:#5f6368}#rec-pill.paused::before{animation:none;border-radius:2px}
 
+/* 記録中の写真 */
+.fab.cam{background:#e65100}.fab.cam svg{stroke:#fff}
+.photo-strip{display:flex;gap:6px;overflow-x:auto;margin:10px 0 2px;scrollbar-width:none}
+.photo-strip img{flex:none;width:64px;height:64px;object-fit:cover;border-radius:8px;border:2px solid #fff;box-shadow:0 0 0 1px var(--line);cursor:pointer}
+.photo-strip .ph-note{font-size:12px;color:var(--muted);align-self:center}
+.pmk{width:44px;height:44px}
+.pmk svg{width:44px;height:44px;overflow:visible;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+.ppop{width:220px}
+.ppop img{width:100%;max-height:140px;object-fit:cover;border-radius:6px;display:block;margin-bottom:6px;cursor:zoom-in}
+.ppop .pr{font-size:12.5px;line-height:1.55}
+.ppop .pa{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ppop .pa button{font:inherit;font-size:12px;border:1px solid #ccc;background:#fff;border-radius:6px;padding:3px 8px;cursor:pointer}
+.ppop .hed{margin-top:6px;padding:6px;background:#fff7ee;border-radius:6px}
+.ppop .hed input{width:100%}
+#viewer{position:fixed;inset:0;z-index:1200;background:#000;display:flex;flex-direction:column}
+#viewer img{flex:1;min-height:0;width:100%;object-fit:contain}
+#viewer .vbar{color:#fff;font-size:13px;padding:10px 14px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#viewer .vbar span{flex:1;min-width:160px}
+#viewer button{font:inherit;font-size:13px;border:1px solid #fff6;background:transparent;color:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
+
 /* 広い画面（パソコン）では左に固定 */
 @media (min-width:900px){
   #sheet,#sheet.half,#sheet.full{left:12px;top:12px;bottom:12px;right:auto;width:380px;height:auto;border-radius:16px;transform:none;box-shadow:var(--shadow)}
@@ -191,6 +211,9 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 <div id="fabs">
   <button class="fab" id="btn-locate" aria-label="現在地">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+  <button class="fab cam" id="btn-photo" aria-label="写真を撮る" hidden>
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
   </button>
   <button class="fab" id="btn-home" aria-label="四国全体を表示">
     <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
@@ -262,8 +285,11 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
           <button class="btn primary big" id="rec-resume" hidden>再開</button>
           <button class="btn big" id="rec-stop" hidden>終えて保存</button>
         </div>
+        <button class="btn big" id="rec-photo" style="width:100%;margin-top:8px;background:#e65100;border-color:#e65100;color:#fff" hidden>写真を撮る（位置と撮影方向を残す）</button>
+        <div class="photo-strip" id="rec-photos"></div>
         <label class="switch">記録中は画面を消さない<input type="checkbox" id="rec-wake" checked></label>
       </div>
+      <p class="note" id="photo-help" hidden>撮りたいものにスマホを向けてから「写真を撮る」を押してください。撮影方向は、ボタンを押した瞬間のスマホの向きです（真北から時計回り。方位磁針はずれることがあるので、地図の写真の印から直せます）。写真はこのスマホの中だけに残ります。</p>
       <p class="note">画面を消すと、スマホによっては記録が止まります（特にiPhone）。歩くときは画面を点けたままにしてください。長い区間を歩くときは、ふだん使っている登山アプリで記録し、そのファイル（GPX）を支部に送ってもかまいません。車や電車で移動するときは「一時停止」を押してください。</p>
       <h3>保存した記録</h3>
       <ul class="tracks" id="tracks"></ul>
@@ -309,6 +335,11 @@ h2{font:700 15px/1.4 var(--f-title);letter-spacing:.05em;margin:0 0 8px}
 </section>
 
 <div id="toast" role="status"></div>
+<input type="file" id="photo-in" accept="image/*" capture="environment" hidden>
+<div id="viewer" hidden>
+  <img alt="">
+  <div class="vbar"><span id="viewer-cap"></span><button type="button" id="viewer-save">写真を保存</button><button type="button" id="viewer-close">閉じる</button></div>
+</div>
 
 <script>
 // 途中で止まったとき、理由を操作板に出す
@@ -555,13 +586,18 @@ function startWatch(){
 function onPos(e){
   const p = L.latLng(e.coords.latitude, e.coords.longitude);
   geo.pos = p;
+  geo.fix = {lat: e.coords.latitude, lon: e.coords.longitude, acc: e.coords.accuracy, alt: e.coords.altitude, t: Date.now()};   // 写真の位置に使う
   locBtn.classList.remove("wait"); locBtn.classList.add("on");
   if (!geo.marker) {
     geo.acc = L.circle(p, {radius: e.coords.accuracy, color: "#1a73e8", weight: 1, fillOpacity: .08, interactive: false}).addTo(map);
     geo.marker = L.marker(p, {icon: L.divIcon({className: "", html: '<div class="me"></div>', iconSize: [18, 18]}), interactive: false, zIndexOffset: 1000}).addTo(map);
   } else { geo.marker.setLatLng(p); geo.acc.setLatLng(p).setRadius(e.coords.accuracy); }
   if (geo.follow) map.panTo(p, {animate: true});
-  if (geo.firstFix) {
+  if (geo.firstFix && geo.quiet) {
+    // 記録を始めたときの現在地：地図を寄せるだけで、開いているタブ（記録）は替えない
+    geo.firstFix = false; geo.quiet = false; geo.follow = true;
+    map.setView(p, Math.max(map.getZoom(), 15));
+  } else if (geo.firstFix) {
     geo.firstFix = false; geo.follow = true;
     map.setView(p, Math.max(map.getZoom(), 15));
     if (!routeBounds.pad(.3).contains(p)) toast("四国の遍路道から離れた場所にいるようです。", 3500);
@@ -713,6 +749,7 @@ function recUI(){
   pill.classList.toggle("paused", !!d && !d.running);
   pill.firstChild.textContent = d && !d.running ? "一時停止中 " : "記録中 ";
   $("#rec-pill-km").textContent = km.toFixed(2) + " km";
+  updatePhotoUI();
 }
 function drawRec(){
   recLayer.clearLayers();
@@ -732,6 +769,7 @@ async function keepAwake(on){
 }
 function onRecPos(e){
   const d = rec.data; if (!d || !d.running) return;
+  geo.fix = {lat: e.coords.latitude, lon: e.coords.longitude, acc: e.coords.accuracy, alt: e.coords.altitude, t: Date.now()};   // 写真の位置に使う
   if (e.coords.accuracy > 50) return;                       // 誤差の大きい点は使わない
   const p = [+e.coords.latitude.toFixed(7), +e.coords.longitude.toFixed(7),
              e.coords.altitude == null ? null : +e.coords.altitude.toFixed(1), e.timestamp || Date.now()];
@@ -757,7 +795,7 @@ function recRun(){
   }, {enableHighAccuracy: true, maximumAge: 0, timeout: 60000});
   clearInterval(rec.timer); rec.timer = setInterval(recUI, 1000);
   keepAwake(true);
-  if (geo.watch === null) startWatch();   // 現在地の青い点も出す
+  if (geo.watch === null) { geo.quiet = true; startWatch(); }   // 現在地の青い点も出す（タブは替えない）
   store.set(REC_KEY, d); recUI();
 }
 function recPause(){
@@ -773,24 +811,31 @@ $("#rec-start").addEventListener("click", () => {
   if (!window.isSecureContext) return toast("記録は、公開した場所（https）から開いたときに使えます。", 5000);
   rec.data = {start: Date.now(), segs: [[]], km: 0, elapsed: 0, running: false, runFrom: 0};
   recRun(); toast("記録を始めました。");
+  compass.start();   // 写真の撮影方向のため（iPhoneはここで「動きと向き」の許可を聞かれる）
+  drawRecPhotos();
 });
 $("#rec-pause").addEventListener("click", () => { recPause(); toast("一時停止しました。歩き出すときは「再開」を押してください。", 3500); });
 $("#rec-resume").addEventListener("click", () => { recRun(); toast("記録を再開しました。"); });
-$("#rec-stop").addEventListener("click", () => {
+$("#rec-stop").addEventListener("click", async () => {
   recPause();
   const segs = rec.data.segs.filter(s => s.length);
   const n = segs.reduce((s, x) => s + x.length, 0);
+  let photos = [];
+  try { photos = await pdb.byRec(rec.data.start); } catch { /* 写真の保存場所が開けない */ }
   if (n < 2) {
-    if (!confirm("記録した点がほとんどありません。保存せずに終えますか？")) return;
+    if (!confirm(`記録した点がほとんどありません。保存せずに終えますか？${photos.length ? `（この記録の写真${photos.length}枚も消えます）` : ""}`)) return;
+    if (photos.length) await pdb.delRec(rec.data.start).catch(() => {});
   } else {
     const t = summarize(segs, "", "rec");
     t.sec = rec.data.elapsed;                // 歩いた時間は一時停止を除いた長さ
+    t.recStart = rec.data.start;             // 写真をこの記録に結びつける
+    t.photoCount = photos.length;
     const list = store.get(TRACKS_KEY, []);
     list.unshift(t);
     if (!store.set(TRACKS_KEY, list)) return;  // 残せなかったときは、記録中のデータを消さない
-    toast(`保存しました：${t.name}`, 3500);
+    toast(`保存しました：${t.name}${photos.length ? `（写真${photos.length}枚）` : ""}`, 3500);
   }
-  rec.data = null; store.del(REC_KEY); drawRec(); recUI(); renderTracks();
+  rec.data = null; store.del(REC_KEY); drawRec(); recUI(); drawRecPhotos(); renderTracks();
 });
 $("#rec-pill").addEventListener("click", () => openTab("rec", "half"));
 $("#rec-wake").addEventListener("change", e => keepAwake(e.target.checked && !!rec.data?.running));
@@ -806,12 +851,222 @@ document.addEventListener("visibilitychange", () => {
   }
   rec.hiddenAt = 0;
 });
+// ---------- 記録中の写真（位置・撮影方向つき） ----------
+// 写真はこのスマホの中のデータベース（IndexedDB）に置く。1枚ごとに、撮った記録（rec＝記録を始めた時刻）・
+// 位置・撮影方向・時刻・その場所の地質を残す。写真は長い辺1600ピクセルに縮めて保存する。
+const DECL = 7.7;   // 四国の偏角（西偏約7.7°）。方位磁針の向き（磁北）を真北に直すのに使う
+const DIR16 = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
+const dirName = h => h == null ? "向きなし" : `${DIR16[Math.round(h / 22.5) % 16]} ${Math.round(h)}°`;
+const pdb = {
+  _p: null,
+  open(){
+    return this._p ||= new Promise((ok, ng) => {
+      const r = indexedDB.open("henro-photos", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("photos", {keyPath: "id"}).createIndex("rec", "rec");
+      r.onsuccess = () => ok(r.result); r.onerror = () => ng(r.error);
+    });
+  },
+  async run(mode, fn){
+    const db = await this.open();
+    return new Promise((ok, ng) => {
+      const tx = db.transaction("photos", mode), req = fn(tx.objectStore("photos"));
+      tx.oncomplete = () => ok(req ? req.result : undefined);
+      tx.onerror = tx.onabort = () => ng(tx.error);
+    });
+  },
+  put: p => pdb.run("readwrite", s => s.put(p)),
+  get: id => pdb.run("readonly", s => s.get(id)),
+  byRec: rec => pdb.run("readonly", s => s.index("rec").getAll(rec)),
+  del: id => pdb.run("readwrite", s => s.delete(id)),
+  async delRec(rec){ for (const p of await pdb.byRec(rec)) await pdb.del(p.id); },
+};
+
+// 方位磁針：スマホの背面のカメラが向いている方向（真北から時計回りの角度）
+// iPhone：webkitCompassHeading（磁北）。Android：deviceorientationabsolute の角度から、背面の向きを計算する（磁北）。
+function camHeading(a, b, g){
+  const r = Math.PI / 180, cA = Math.cos(a * r), sA = Math.sin(a * r), cB = Math.cos(b * r), sB = Math.sin(b * r), cG = Math.cos(g * r), sG = Math.sin(g * r);
+  let east = -(cA * sG + cG * sA * sB), north = -(sA * sG - cA * cG * sB);       // 背面（画面の反対側）の向き
+  if (Math.hypot(east, north) < 0.35) { east = -cB * sA; north = cA * cB; }       // ほぼ水平に寝かせているときは、上の辺の向き
+  return (Math.atan2(east, north) / r + 360) % 360;
+}
+const compass = {
+  on: false, heading: null, acc: null, t: 0, src: null,
+  async start(){
+    if (this.on) return true;
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+        if (await DeviceOrientationEvent.requestPermission() !== "granted") {
+          toast("「動きと向き」が許可されていないため、写真の撮影方向は残りません（位置は残ります）。", 5000); return false;
+        }
+      }
+    } catch { return false; }
+    const h = e => this.read(e);
+    if ("ondeviceorientationabsolute" in window) addEventListener("deviceorientationabsolute", h);
+    addEventListener("deviceorientation", h);
+    this.on = true; return true;
+  },
+  read(e){
+    let mag = null;
+    if (typeof e.webkitCompassHeading === "number" && e.webkitCompassHeading >= 0) { mag = e.webkitCompassHeading; this.acc = e.webkitCompassAccuracy; this.src = "iPhoneの方位磁針"; }
+    else if ((e.absolute || e.type === "deviceorientationabsolute") && e.alpha != null) { mag = camHeading(e.alpha, e.beta || 0, e.gamma || 0); this.acc = null; this.src = "方位磁針"; }
+    else return;   // 向きの基準がない値（北がわからない）は使わない
+    this.heading = (mag - DECL + 360) % 360;
+    this.t = Date.now();
+  },
+  now(){ return this.heading != null && Date.now() - this.t < 3000 ? this.heading : null; },
+};
+
+// 地図の写真の印：オレンジの丸＋撮影方向の扇形
+function photoIcon(h){
+  const fan = h == null ? '<circle r="15" fill="none" stroke="#e65100" stroke-width="1.5" stroke-dasharray="3 3"/>'
+    : `<g transform="rotate(${h.toFixed(1)})"><path d="M0 0L-9.3-19.9A22 22 0 0 1 9.3-19.9Z" fill="rgba(255,152,0,.5)" stroke="#e65100" stroke-width="1.5"/></g>`;
+  return L.divIcon({className: "pmk", iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -14],
+    html: `<svg viewBox="-22 -22 44 44">${fan}<circle r="7" fill="#e65100" stroke="#fff" stroke-width="2"/><circle r="2.4" fill="#fff"/></svg>`});
+}
+const urlCache = new Map();
+const thumbURL = p => { if (!urlCache.has(p.id)) urlCache.set(p.id, URL.createObjectURL(p.thumb)); return urlCache.get(p.id); };
+const fmtClock = t => { const d = new Date(t), z = n => String(n).padStart(2, "0"); return `${d.getMonth() + 1}/${d.getDate()} ${z(d.getHours())}:${z(d.getMinutes())}`; };
+const photoMarkers = new Map();   // 写真のid → 地図の印
+function photoPopupHtml(p){
+  const geo = p.geo ? `${esc(p.geo.lithology_ja)}<span class="note">（${esc(p.geo.formationAge_ja)}）</span>` : '<span class="note">（地質は電波のある所で調べます）</span>';
+  return `<div class="ppop" data-id="${p.id}"><img src="${thumbURL(p)}" alt="写真" data-act="view">
+    <div class="pr"><b>${fmtClock(p.t)}</b>　撮影方向：<b>${dirName(p.heading)}</b>${p.headingSrc === "manual" ? "（手で直した）" : p.heading != null ? "（方位磁針）" : ""}<br>
+    位置の誤差 約${Math.round(p.acc || 0)} m<br>地質：${geo}</div>
+    <div class="pa"><button data-act="view">大きく見る</button><button data-act="dir">向きを直す</button><button data-act="save">写真を保存</button><button data-act="del">消す</button></div></div>`;
+}
+function addPhotoMarker(p, layer){
+  const m = L.marker([p.lat, p.lon], {icon: photoIcon(p.heading), zIndexOffset: 1200})
+    .bindPopup(() => photoPopupHtml(p), {maxWidth: 240, autoPanPaddingTopLeft: L.point(10, 72), autoPanPaddingBottomRight: L.point(10, 50)});
+  m.photo = p; photoMarkers.set(p.id, m);
+  return m.addTo(layer);
+}
+const recPhotoLayer = L.featureGroup().addTo(map);
+async function drawRecPhotos(){
+  recPhotoLayer.clearLayers();
+  const strip = $("#rec-photos");
+  if (!rec.data) { strip.innerHTML = ""; return; }
+  let list = [];
+  try { list = await pdb.byRec(rec.data.start); } catch { strip.innerHTML = '<span class="ph-note">写真の保存場所を開けませんでした。</span>'; return; }
+  list.sort((a, b) => a.t - b.t).forEach(p => addPhotoMarker(p, recPhotoLayer));
+  strip.innerHTML = list.length ? list.map(p => `<img src="${thumbURL(p)}" alt="" data-id="${p.id}">`).join("")
+    : '<span class="ph-note">まだ写真はありません。</span>';
+}
+function updatePhotoUI(){
+  const on = !!rec.data;
+  $("#btn-photo").hidden = !on; $("#rec-photo").hidden = !on; $("#photo-help").hidden = !on;
+}
+
+// 撮影：ボタンを押した瞬間の位置と向きを控えてから、スマホのカメラを開く
+let pendingShot = null;
+function startShot(){
+  if (!rec.data) return toast("写真は、記録しているあいだに撮れます。", 3500);
+  const f = geo.fix;
+  if (!f || Date.now() - f.t > 120000) return toast("いまの位置がまだわかりません。空の見える所で少し待ってから押してください。", 4500);
+  pendingShot = {t: Date.now(), lat: f.lat, lon: f.lon, acc: f.acc, alt: f.alt, heading: compass.now(), hsrc: compass.src, hacc: compass.acc};
+  if (!compass.on) compass.start();   // 次の写真から向きが入る（iPhoneは許可の確認が出る）
+  $("#photo-in").value = "";
+  $("#photo-in").click();
+}
+async function shrink(file, maxSide, q){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); img.src = url; await img.decode();
+    const s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(ok => c.toBlob(ok, "image/jpeg", q));
+    return {blob, w: c.width, h: c.height};
+  } finally { URL.revokeObjectURL(url); }
+}
+$("#photo-in").addEventListener("change", async e => {
+  const file = e.target.files && e.target.files[0], shot = pendingShot; pendingShot = null;
+  if (!file || !shot || !rec.data) return;
+  try {
+    const big = await shrink(file, 1600, .82), small = await shrink(file, 360, .72);
+    const p = {id: shot.t + "-" + Math.random().toString(36).slice(2, 6), rec: rec.data.start, t: shot.t,
+               lat: shot.lat, lon: shot.lon, acc: shot.acc, alt: shot.alt,
+               heading: shot.heading, headingSrc: shot.heading == null ? null : "compass", headingDevice: shot.hsrc, headingAcc: shot.hacc,
+               w: big.w, h: big.h, blob: big.blob, thumb: small.blob, geo: null, name: file.name || ""};
+    await pdb.put(p);
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    await drawRecPhotos();
+    toast(`写真を残しました（撮影方向：${dirName(p.heading)}）。`, 3000);
+    // その場所の地質を調べて写真に添える（電波がなければあとで）
+    try {
+      const r = await fetch(LEGEND_API + p.lat.toFixed(6) + "," + p.lon.toFixed(6));
+      if (r.ok) { const g = await r.json(); if (g && g.lithology_ja) { p.geo = {lithology_ja: g.lithology_ja, formationAge_ja: g.formationAge_ja, group_ja: g.group_ja, symbol: g.symbol}; await pdb.put(p); } }
+    } catch { /* 電波なし */ }
+  } catch (err) {
+    toast("写真を残せませんでした（" + err.message + "）。スマホの空き容量を確かめてください。", 6000);
+  }
+});
+$("#btn-photo").addEventListener("click", startShot);
+$("#rec-photo").addEventListener("click", startShot);
+$("#rec-photos").addEventListener("click", e => {
+  const img = e.target.closest("img[data-id]"); if (!img) return;
+  const m = photoMarkers.get(img.dataset.id); if (!m) return;
+  if (!wide()) setSheet("peek");
+  map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 17), {duration: .6});
+  map.once("moveend", () => m.openPopup());
+});
+
+// 写真の印の吹き出しのボタン
+async function savePhotoFile(p){
+  const d = new Date(p.t), z = n => String(n).padStart(2, "0");
+  const f = new File([p.blob], `henro_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.jpg`, {type: "image/jpeg"});
+  if (navigator.canShare && navigator.canShare({files: [f]})) {
+    try { await navigator.share({files: [f]}); return; } catch (err) { if (err.name === "AbortError") return; }
+  }
+  saveFile(f);
+}
+function openViewer(p){
+  const v = $("#viewer"), img = v.querySelector("img");
+  img.src = URL.createObjectURL(p.blob); v.dataset.id = p.id;
+  $("#viewer-cap").textContent = `${fmtClock(p.t)}　撮影方向 ${dirName(p.heading)}${p.geo ? "　" + p.geo.lithology_ja : ""}`;
+  v.hidden = false;
+}
+$("#viewer-close").addEventListener("click", () => { const v = $("#viewer"), img = v.querySelector("img"); URL.revokeObjectURL(img.src); img.removeAttribute("src"); v.hidden = true; });
+$("#viewer-save").addEventListener("click", async () => { const p = await pdb.get($("#viewer").dataset.id); if (p) savePhotoFile(p); });
+map.on("popupopen", ev => {
+  const box = ev.popup.getElement().querySelector(".ppop"); if (!box) return;
+  const m = photoMarkers.get(box.dataset.id); if (!m) return;
+  box.addEventListener("click", async e => {
+    const b = e.target.closest("[data-act]"); if (!b) return;
+    const p = m.photo;
+    if (b.dataset.act === "view") openViewer(p);
+    if (b.dataset.act === "save") savePhotoFile(p);
+    if (b.dataset.act === "del") {
+      if (!confirm("この写真を消します。消すと元に戻せません。よろしいですか？")) return;
+      await pdb.del(p.id); URL.revokeObjectURL(urlCache.get(p.id)); urlCache.delete(p.id);
+      m.remove(); photoMarkers.delete(p.id); map.closePopup();
+      if (rec.data && p.rec === rec.data.start) drawRecPhotos(); else bumpPhotoCount(p.rec, -1);
+    }
+    if (b.dataset.act === "dir") {
+      if (box.querySelector(".hed")) return;
+      const start = p.heading ?? 0, before = p.heading;
+      box.insertAdjacentHTML("beforeend", `<div class="hed">撮影方向：<b class="hv">${dirName(start)}</b>
+        <input type="range" min="0" max="359" step="1" value="${Math.round(start)}">
+        <div class="pa"><button data-h="-10">−10°</button><button data-h="10">＋10°</button><button data-h="ok"><b>決める</b></button><button data-h="cancel">やめる</button></div></div>`);
+      m.getPopup().update();   // 欄が増えたぶん、吹き出しが画面に収まるよう地図をずらす
+      const rng = box.querySelector(".hed input"), show = h => { box.querySelector(".hv").textContent = dirName(h); m.setIcon(photoIcon(h)); };
+      rng.addEventListener("input", () => show(+rng.value));
+      show(start);
+      box.querySelector(".hed").addEventListener("click", async ev2 => {
+        const k = ev2.target.closest("[data-h]"); if (!k) return; ev2.stopPropagation();
+        if (k.dataset.h === "ok") { p.heading = +rng.value; p.headingSrc = "manual"; await pdb.put(p); m.setIcon(photoIcon(p.heading)); map.closePopup(); toast(`撮影方向を ${dirName(p.heading)} に直しました。`); }
+        else if (k.dataset.h === "cancel") { m.setIcon(photoIcon(before)); map.closePopup(); }
+        else { rng.value = (+rng.value + +k.dataset.h + 360) % 360; show(+rng.value); }
+      });
+    }
+  });
+});
+
 // 前回の記録が途中で残っていたら、一時停止の状態で戻す
 step("記録の続き", () => {
   const d = store.get(REC_KEY, null);
   if (d && d.segs) {
     if (d.running) { d.elapsed += Math.max(0, ((d.segs.flat().at(-1)?.[3] || d.runFrom) - d.runFrom) / 1000); d.running = false; }
-    rec.data = d; drawRec(); store.set(REC_KEY, d);
+    rec.data = d; drawRec(); store.set(REC_KEY, d); drawRecPhotos();
     toast("前回の記録の途中です。続けるときは「記録」タブで「再開」を押してください。", 5000);
   }
   recUI();
@@ -821,19 +1076,33 @@ step("記録の続き", () => {
 const shownTracks = {};
 const trackLayer = L.featureGroup().addTo(map);
 function toggleTrack(t){
-  if (shownTracks[t.id]) { trackLayer.removeLayer(shownTracks[t.id]); delete shownTracks[t.id]; renderTracks(); return; }
+  if (shownTracks[t.id]) { trackLayer.removeLayer(shownTracks[t.id]); delete shownTracks[t.id]; hideTrackPhotos(t.id); renderTracks(); return; }
   const g = L.featureGroup(t.segs.filter(s => s.length > 1).map(s => L.polyline(s.map(p2ll), {color: "#7b3fa0", weight: 5, opacity: .85})))
     .bindPopup(`<b>${esc(t.name)}</b><br>${t.km.toFixed(2)} km`);
   shownTracks[t.id] = g.addTo(trackLayer);
   if (!wide()) setSheet("peek");
   map.fitBounds(g.getBounds(), {padding: [40, 40], maxZoom: 16});
   renderTracks();
+  // この記録で撮った写真も出す（線の吹き出しと取り合わないよう、別のまとまりにする）
+  if (t.recStart) pdb.byRec(t.recStart).then(ps => {
+    if (shownTracks[t.id] !== g || !ps.length) return;
+    shownTrackPhotos[t.id] = L.layerGroup().addTo(map);
+    ps.forEach(p => addPhotoMarker(p, shownTrackPhotos[t.id]));
+  }).catch(() => {});
+}
+const shownTrackPhotos = {};
+function hideTrackPhotos(id){ if (shownTrackPhotos[id]) { map.removeLayer(shownTrackPhotos[id]); delete shownTrackPhotos[id]; } }
+// 写真を消したときに、保存した記録の「写真○枚」を合わせる
+function bumpPhotoCount(recStart, d){
+  const list = store.get(TRACKS_KEY, []), t = list.find(x => x.recStart === recStart);
+  if (!t) return;
+  t.photoCount = Math.max(0, (t.photoCount || 0) + d); store.set(TRACKS_KEY, list); renderTracks();
 }
 function renderTracks(){
   const list = store.get(TRACKS_KEY, []);
   $("#tracks").innerHTML = list.length ? list.map(t => `<li data-id="${t.id}">
       <div class="tn">${esc(t.name)}</div>
-      <div class="ts">${t.km.toFixed(2)} km${t.sec ? "・" + fmtDur(t.sec) : ""}・遍路道に沿って ${t.onKm.toFixed(2)} km${t.src === "import" ? "・読み込み" : ""}</div>
+      <div class="ts">${t.km.toFixed(2)} km${t.sec ? "・" + fmtDur(t.sec) : ""}・遍路道に沿って ${t.onKm.toFixed(2)} km${t.photoCount ? `・写真${t.photoCount}枚` : ""}${t.src === "import" ? "・読み込み" : ""}</div>
       <div class="ta"><button class="btn" data-act="show">${shownTracks[t.id] ? "地図から外す" : "地図で見る"}</button>
         <button class="btn primary" data-act="send">送る</button>
         <button class="btn" data-act="save">ファイルに保存</button>
@@ -878,8 +1147,10 @@ $("#tracks").addEventListener("click", async e => {
     } else { saveFile(f); toast("このブラウザでは直接送れないため、ファイルに保存しました。メールに添付して送ってください。", 5000); }
   }
   if (b.dataset.act === "del") {
-    if (!confirm(`「${t.name}」を消します。消すと元に戻せません。支部に送り終えていますか？`)) return;
+    if (!confirm(`「${t.name}」を消します${t.photoCount ? `（写真${t.photoCount}枚も消えます）` : ""}。消すと元に戻せません。支部に送り終えていますか？`)) return;
     if (shownTracks[id]) { trackLayer.removeLayer(shownTracks[id]); delete shownTracks[id]; }
+    hideTrackPhotos(id);
+    if (t.recStart) await pdb.delRec(t.recStart).catch(() => {});
     store.set(TRACKS_KEY, list.filter(x => x.id !== id)); renderTracks();
   }
 });
